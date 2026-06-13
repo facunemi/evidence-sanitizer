@@ -72,7 +72,7 @@ class Rule(Protocol):
         ...
 ```
 
-These are public design concepts, not a requirement to create separate modules in milestone 0.
+These are public design concepts, not a requirement to create separate modules or protocols in milestone 0. Do not implement the `Rule` protocol in milestone 0. In milestone 1, implement a protocol only if it is the smallest way to keep the bearer rule independently testable.
 
 ## Finding And Report Data Structures
 

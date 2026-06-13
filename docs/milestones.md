@@ -19,14 +19,31 @@ Expected milestone 0 work:
 - Establish Python 3.12 or newer support.
 - Configure Typer for the CLI.
 - Configure pytest, ruff, and mypy.
-- Add a CLI entry point with help output.
-- Add minimal tests for command availability and expected no-implementation behavior.
+- Add a CLI entry point with root help output.
+- Add minimal tests for root command availability and expected no-implementation behavior.
 - Document development commands.
+
+Milestone 0 CLI scope:
+
+- Expose root CLI help only.
+- Do not register a `sanitize` command in milestone 0.
+- Add the `sanitize` command in milestone 1.
+
+Milestone 0 packaging decisions:
+
+- Use `pyproject.toml` with PEP 621 project metadata.
+- Use `hatchling` as the build backend.
+- Start at version `0.1.0`.
+- Use `typer` as the only runtime dependency.
+- Use dependency groups or equivalent `uv`-compatible metadata for `pytest`, `ruff`, and `mypy`.
+- Define the `evidence-sanitizer` console script so `uv run evidence-sanitizer --help` invokes the Typer root app.
+- Keep production package code limited to the expected package shape for milestone 0.
 
 Milestone 0 must not include:
 
 - File reading for sanitization.
 - File writing for sanitized output.
+- The `sanitize` command, including a non-functional stub.
 - Bearer-token detection.
 - Replacement logic.
 - Rule abstractions beyond what the CLI skeleton requires.
@@ -35,8 +52,9 @@ Milestone 0 must not include:
 ### Milestone 0 Acceptance Criteria
 
 - `uv` can create and use the project environment.
-- The CLI help command works.
-- The package shape is limited to `__init__.py`, `__main__.py`, and `cli.py` unless a concrete tooling need justifies otherwise.
+- The root CLI help command works.
+- The CLI exposes root help only; `sanitize` is not registered until milestone 1.
+- The production package code shape is limited to `__init__.py`, `__main__.py`, and `cli.py`.
 - No sanitizer implementation exists.
 - No production code reads evidence files.
 - No production code writes sanitized output files.
@@ -63,6 +81,7 @@ Milestone 1 implements the smallest useful sanitizer. It processes one file in m
 
 Expected milestone 1 behavior:
 
+- Provide the `sanitize INPUT --output OUTPUT [--dry-run]` command.
 - Accept one input path and one output path.
 - Support `--dry-run`.
 - Allow the input path to be a symbolic link to a regular file.
@@ -157,7 +176,7 @@ Required test coverage:
 - Non-HTTP prose containing `Bearer` is not redacted.
 - Idempotence of repeated sanitization.
 - No secret leakage in CLI output or exceptions.
-- Long malformed lines do not cause unacceptable regex runtime.
+- Bearer detection over a synthetic 1 MiB malformed non-matching line completes in less than 2 seconds during the normal `uv run pytest` test run.
 
 ## Future Milestones
 

@@ -24,6 +24,7 @@
 ## Scope Discipline
 
 - Milestone 0 contains no sanitizer implementation.
+- Milestone 0 exposes root CLI help only; do not register `sanitize` until milestone 1.
 - Milestone 1 contains only the HTTP-style `Authorization: Bearer` rule.
 - Do not add additional rules, directory processing, overwrite mode, metadata preservation, or atomic-output guarantees without an approved spec change.
 - Deferred decisions must remain marked as deferred instead of being silently implemented.

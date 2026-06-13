@@ -52,7 +52,7 @@ Milestone 1 is smaller than the full MVP rule set. It implements only one rule: 
 - User-defined rules, configuration files, or plugins in the first version.
 - Database storage.
 - Web application features.
-- Debug mode that might expose evidence contents.
+- Debug mode.
 - Comprehensive defense against adversarial filesystem races, junction attacks, or hard-link attacks in milestone 1.
 
 ## User Stories
@@ -66,6 +66,8 @@ Milestone 1 is smaller than the full MVP rule set. It implements only one rule: 
 - As a security engineer, I can rely on safe user-facing errors that do not include detected values or source excerpts.
 
 ## Functional Requirements
+
+These are MVP functional requirements. Milestone 0 is governed by `docs/milestones.md` and must not implement sanitizer behavior.
 
 - The CLI must provide a `sanitize` command.
 - The `sanitize` command must accept one input path and one output path.
