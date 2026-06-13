@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.26.0,<2.0.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "evidence-sanitizer"
+version = "0.1.0"
+description = "Local-first CLI for creating sanitized copies of authorized penetration-testing evidence."
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.15.0,<1.0.0",
+]
+
+[project.scripts]
+evidence-sanitizer = "evidence_sanitizer.cli:main"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.14.0,<2.0.0",
+    "pytest>=8.3.0,<9.0.0",
+    "ruff>=0.8.0,<1.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/evidence_sanitizer"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-config --strict-markers"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_configs = true
+mypy_path = "src"
