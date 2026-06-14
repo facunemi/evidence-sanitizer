@@ -1,4 +1,4 @@
-"""Single-file sanitization behavior for milestone 1."""
+"""Single-file sanitization behavior."""
 
 from __future__ import annotations
 
@@ -10,17 +10,33 @@ from pathlib import Path
 
 MAX_INPUT_BYTES = 10 * 1024 * 1024
 RULE_ID_AUTHORIZATION_BEARER = "authorization.bearer"
-REDACTION_MARKER = "<REDACTED:authorization.bearer>"
+RULE_ID_AUTHORIZATION_BASIC = "authorization.basic"
+RULE_ID_AUTHORIZATION_OTHER = "authorization.other"
+
+REDACTION_MARKER_AUTHORIZATION_BEARER = "<REDACTED:authorization.bearer>"
+REDACTION_MARKER_AUTHORIZATION_BASIC = "<REDACTED:authorization.basic>"
+REDACTION_MARKER_AUTHORIZATION_CREDENTIALS = "<REDACTED:authorization.credentials>"
+REDACTION_MARKER = REDACTION_MARKER_AUTHORIZATION_BEARER
+APPROVED_REDACTION_MARKERS = frozenset(
+    (
+        REDACTION_MARKER_AUTHORIZATION_BEARER,
+        REDACTION_MARKER_AUTHORIZATION_BASIC,
+        REDACTION_MARKER_AUTHORIZATION_CREDENTIALS,
+    )
+)
 
 EXIT_INTERNAL_ERROR = 1
 EXIT_UNSAFE_PATH = 3
 EXIT_INPUT_ERROR = 4
 EXIT_OUTPUT_ERROR = 5
 
-AUTHORIZATION_BEARER_PATTERN = re.compile(
-    r"^Authorization[ \t]*:[ \t]*Bearer[ \t]+"
-    r"(?P<credential>\S+)(?P<trailing>[ \t]*)(?=\r?\n|$)",
-    re.IGNORECASE | re.MULTILINE,
+AUTHORIZATION_HEADER_PATTERN = re.compile(
+    r"^Authorization[ \t]*:[ \t]*"
+    r"(?P<scheme>[!#$%&'*+\-.^_`|~0-9A-Za-z]+)"
+    r"[ \t]+"
+    r"(?P<credential_section>[^\r\n]*)"
+    r"(?=\r?\n|$)",
+    re.IGNORECASE | re.MULTILINE | re.ASCII,
 )
 
 
@@ -67,27 +83,59 @@ class SanitizationResult:
     output_written: bool
 
 
-def find_authorization_bearer(text: str) -> tuple[Finding, ...]:
-    """Find HTTP-style Authorization: Bearer credentials."""
+def find_authorization_credentials(text: str) -> tuple[Finding, ...]:
+    """Find HTTP-style Authorization credentials for milestone 2."""
     findings: list[Finding] = []
 
-    # Milestone 1 intentionally treats any exact header-like line as a header;
+    # Milestone 2 intentionally treats any exact header-like line as a header;
     # full HTTP message parsing and body-boundary awareness are deferred.
-    for match in AUTHORIZATION_BEARER_PATTERN.finditer(text):
-        credential = match.group("credential")
-        if credential == REDACTION_MARKER:
+    for match in AUTHORIZATION_HEADER_PATTERN.finditer(text):
+        credential_section = match.group("credential_section")
+        credential = credential_section.rstrip(" \t")
+        if not credential or credential in APPROVED_REDACTION_MARKERS:
             continue
+
+        scheme = match.group("scheme").lower()
+        if scheme == "bearer":
+            if not _is_single_credential_token(credential):
+                continue
+            rule_id = RULE_ID_AUTHORIZATION_BEARER
+            replacement = REDACTION_MARKER_AUTHORIZATION_BEARER
+        elif scheme == "basic":
+            if not _is_single_credential_token(credential):
+                continue
+            rule_id = RULE_ID_AUTHORIZATION_BASIC
+            replacement = REDACTION_MARKER_AUTHORIZATION_BASIC
+        else:
+            rule_id = RULE_ID_AUTHORIZATION_OTHER
+            replacement = REDACTION_MARKER_AUTHORIZATION_CREDENTIALS
+
+        start = match.start("credential_section")
 
         findings.append(
             Finding(
-                rule_id=RULE_ID_AUTHORIZATION_BEARER,
-                start=match.start("credential"),
-                end=match.end("credential"),
-                replacement=REDACTION_MARKER,
+                rule_id=rule_id,
+                start=start,
+                end=start + len(credential),
+                replacement=replacement,
             )
         )
 
     return tuple(findings)
+
+
+def _is_single_credential_token(value: str) -> bool:
+    """Return whether a specialized credential is one non-whitespace token."""
+    return not any(character.isspace() for character in value)
+
+
+def find_authorization_bearer(text: str) -> tuple[Finding, ...]:
+    """Find HTTP-style Authorization: Bearer credentials."""
+    return tuple(
+        finding
+        for finding in find_authorization_credentials(text)
+        if finding.rule_id == RULE_ID_AUTHORIZATION_BEARER
+    )
 
 
 def apply_findings(text: str, findings: Sequence[Finding]) -> str:
@@ -110,11 +158,12 @@ def apply_findings(text: str, findings: Sequence[Finding]) -> str:
 
 
 def sanitize_text(text: str) -> tuple[str, SanitizationReport]:
-    """Sanitize decoded text with the single milestone 1 rule."""
-    findings = find_authorization_bearer(text)
+    """Sanitize decoded text with the approved Authorization rules."""
+    findings = find_authorization_credentials(text)
     sanitized = apply_findings(text, findings)
-    count = len(findings)
-    counts = {RULE_ID_AUTHORIZATION_BEARER: count} if count else {}
+    counts: dict[str, int] = {}
+    for finding in findings:
+        counts[finding.rule_id] = counts.get(finding.rule_id, 0) + 1
 
     return sanitized, SanitizationReport(
         counts_by_rule=counts,
@@ -220,7 +269,7 @@ def write_output_exclusive(output_path: Path, text: str, had_bom: bool) -> None:
 def sanitize_file(
     input_path: Path, output_path: Path, dry_run: bool
 ) -> SanitizationResult:
-    """Run milestone 1 sanitization for one input file."""
+    """Run sanitization for one input file."""
     validate_paths(input_path, output_path)
     decoded = read_input_file(input_path)
     sanitized, report = sanitize_text(decoded.text)

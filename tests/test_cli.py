@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from evidence_sanitizer.sanitizer import REDACTION_MARKER
+from evidence_sanitizer.sanitizer import (
+    REDACTION_MARKER,
+    REDACTION_MARKER_AUTHORIZATION_BASIC,
+    REDACTION_MARKER_AUTHORIZATION_CREDENTIALS,
+)
 
 PRODUCT_DESCRIPTION = (
     "Local-first CLI for creating sanitized copies of authorized "
@@ -15,6 +19,13 @@ PRODUCT_DESCRIPTION = (
 )
 ENTRYPOINTS = ("console", "module")
 SYNTHETIC_CREDENTIAL = "eyJhbGciOiJIUzI1NiJ9.synthetic-token"
+SYNTHETIC_BASIC_CREDENTIAL = "synthetic-basic-token+/="
+SYNTHETIC_CUSTOM_CREDENTIAL = "appId:synthetic-signature:nonce:timestamp"
+SENSITIVE_VALUES = (
+    SYNTHETIC_CREDENTIAL,
+    SYNTHETIC_BASIC_CREDENTIAL,
+    SYNTHETIC_CUSTOM_CREDENTIAL,
+)
 
 
 def run_entrypoint(
@@ -55,7 +66,7 @@ def assert_rejected(
 
 def assert_no_cli_leak(result: subprocess.CompletedProcess[str]) -> None:
     output = combined_output(result)
-    if SYNTHETIC_CREDENTIAL in output:
+    if any(value in output for value in SENSITIVE_VALUES):
         pytest.fail("CLI output leaked synthetic credential")
 
 
@@ -66,7 +77,7 @@ def assert_file_unchanged(path: Path, expected: bytes) -> None:
 
 def assert_output_bytes(path: Path, expected: bytes) -> None:
     actual = path.read_bytes()
-    if SYNTHETIC_CREDENTIAL.encode() in actual:
+    if any(value.encode() in actual for value in SENSITIVE_VALUES):
         pytest.fail("sanitized output leaked synthetic credential")
     assert actual == expected
 
@@ -113,11 +124,19 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
             "GET /api/profile HTTP/1.1\n"
             "Host: example.test\n"
             f"Authorization: Bearer {SYNTHETIC_CREDENTIAL}\n"
+            f"Authorization: Basic {SYNTHETIC_BASIC_CREDENTIAL}\n"
+            f"Authorization: AMX {SYNTHETIC_CUSTOM_CREDENTIAL}\n"
             "Accept: application/json\n"
         ).encode()
-        expected = source.replace(
-            SYNTHETIC_CREDENTIAL.encode(), REDACTION_MARKER.encode()
-        )
+        expected = (
+            "GET /api/profile HTTP/1.1\n"
+            "Host: example.test\n"
+            f"Authorization: Bearer {REDACTION_MARKER}\n"
+            f"Authorization: Basic {REDACTION_MARKER_AUTHORIZATION_BASIC}\n"
+            "Authorization: AMX "
+            f"{REDACTION_MARKER_AUTHORIZATION_CREDENTIALS}\n"
+            "Accept: application/json\n"
+        ).encode()
         input_path.write_bytes(source)
 
         result = run_entrypoint(
@@ -128,7 +147,9 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
         assert result.returncode == 0
         output = combined_output(result)
         assert "Rules triggered:" in output
+        assert "authorization.basic: 1" in output
         assert "authorization.bearer: 1" in output
+        assert "authorization.other: 1" in output
         assert "Authorization:" not in output
         assert_output_bytes(output_path, expected)
         assert_file_unchanged(input_path, source)

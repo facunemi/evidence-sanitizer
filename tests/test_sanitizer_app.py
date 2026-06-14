@@ -1,4 +1,4 @@
-"""Application-level tests for milestone 1 sanitization."""
+"""Application-level tests for sanitization."""
 
 from __future__ import annotations
 
@@ -14,12 +14,19 @@ from evidence_sanitizer.sanitizer import (
     EXIT_UNSAFE_PATH,
     MAX_INPUT_BYTES,
     REDACTION_MARKER,
+    REDACTION_MARKER_AUTHORIZATION_BASIC,
+    REDACTION_MARKER_AUTHORIZATION_CREDENTIALS,
+    RULE_ID_AUTHORIZATION_BASIC,
     RULE_ID_AUTHORIZATION_BEARER,
+    RULE_ID_AUTHORIZATION_OTHER,
     SafeError,
     sanitize_file,
 )
 
 TOKEN = "eyJhbGciOiJIUzI1NiJ9.synthetic-token"
+BASIC_TOKEN = "synthetic-basic-token+/="
+CUSTOM_CREDENTIAL = "appId:synthetic-signature:nonce:timestamp"
+SENSITIVE_VALUES = (TOKEN, BASIC_TOKEN, CUSTOM_CREDENTIAL)
 
 
 def assert_source_unchanged(path: Path, expected: bytes) -> None:
@@ -29,7 +36,7 @@ def assert_source_unchanged(path: Path, expected: bytes) -> None:
 
 def assert_sanitized_output(path: Path, expected: bytes) -> None:
     actual = path.read_bytes()
-    if TOKEN.encode() in actual:
+    if any(value.encode() in actual for value in SENSITIVE_VALUES):
         pytest.fail("sanitized output leaked synthetic credential")
     assert actual == expected
 
@@ -50,6 +57,42 @@ def test_source_unchanged_and_sanitized_output_correct(tmp_path: Path) -> None:
 
     assert result.output_written
     assert result.report.counts_by_rule == {RULE_ID_AUTHORIZATION_BEARER: 1}
+    assert_sanitized_output(output_path, expected)
+    assert_source_unchanged(input_path, source)
+
+
+def test_multiple_authorization_schemes_sanitized_and_reported(
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "evidence.txt"
+    output_path = tmp_path / "evidence.sanitized.txt"
+    source = (
+        "GET /api/profile HTTP/1.1\n"
+        "Host: example.test\n"
+        f"Authorization: Bearer {TOKEN}\n"
+        f"Authorization: Basic {BASIC_TOKEN}\n"
+        f"Authorization: AMX {CUSTOM_CREDENTIAL}\n"
+        "Accept: application/json\n"
+    ).encode()
+    expected = (
+        "GET /api/profile HTTP/1.1\n"
+        "Host: example.test\n"
+        f"Authorization: Bearer {REDACTION_MARKER}\n"
+        f"Authorization: Basic {REDACTION_MARKER_AUTHORIZATION_BASIC}\n"
+        "Authorization: AMX "
+        f"{REDACTION_MARKER_AUTHORIZATION_CREDENTIALS}\n"
+        "Accept: application/json\n"
+    ).encode()
+    input_path.write_bytes(source)
+
+    result = sanitize_file(input_path, output_path, dry_run=False)
+
+    assert result.output_written
+    assert result.report.counts_by_rule == {
+        RULE_ID_AUTHORIZATION_BEARER: 1,
+        RULE_ID_AUTHORIZATION_BASIC: 1,
+        RULE_ID_AUTHORIZATION_OTHER: 1,
+    }
     assert_sanitized_output(output_path, expected)
     assert_source_unchanged(input_path, source)
 
