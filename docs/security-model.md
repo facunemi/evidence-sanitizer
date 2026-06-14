@@ -38,6 +38,7 @@
 - Findings and reports must not store matched secret values.
 - Reports for generic Authorization schemes must not include custom scheme names as rule identifiers.
 - Reports for Cookie findings must use only fixed rule identifiers and must not derive rule identifiers from cookie names.
+- Milestone 4 Cookie classification must use only deterministic Cookie-name rules and must not inspect, decode, parse, infer from, or classify using Cookie values.
 - The tool must not perform network calls or telemetry.
 - The first implementation must not use LLM detection.
 - Tests must use synthetic data only.
@@ -64,6 +65,7 @@ Safe output must not include:
 - Custom Authorization scheme names in report rule identifiers.
 - Cookie values or Cookie source excerpts.
 - Cookie names as dynamic report identifiers.
+- Cookie classification categories derived into dynamic report identifiers.
 
 Sensitive values must not be accepted as command-line arguments. CLI arguments should be limited to paths and flags so secrets are not encouraged to appear in shell history or process listings.
 
@@ -153,7 +155,15 @@ Milestone 3 expands only to exact line-start HTTP request `Cookie` header lines.
 
 Cookie values are sensitive and must be redacted when a supported Cookie line is sanitized. Safely parsed cookie names are intentionally preserved for evidence usefulness, but preserved names may disclose framework details, authentication mechanisms, identity concepts, tenancy concepts, and application internals. Examples include `ASP.NET_SessionId`, `JSESSIONID`, `username`, `email`, `customerId`, `tenant`, and `portalAuth`. Cookie-name classification is deferred to milestone 4.
 
+Milestone 4 adds deterministic Cookie-name classification for safely parsed request Cookie headers. The approved internal categories are sensitive, telemetry, harmless, and unknown. Sensitive, telemetry, and unknown Cookie values remain redacted. Only exact harmless names `theme`, `color_scheme`, and `display_mode` preserve their original values. Classification is case-insensitive, uses only ASCII lowercase name matching, treats `_`, `-`, and `.` as distinct, performs no Unicode normalization, uses no suffix matching, and uses no broad substring matching.
+
+Milestone 4 telemetry values remain redacted because telemetry cookies can contain persistent browser, user, or device identifiers. Preserving telemetry values could enable cross-report, cross-site, or long-term correlation. Telemetry classification exists only to make the deterministic policy explicit; it does not create a special report entry, marker, or preservation behavior.
+
+Preserving even approved harmless values carries residual risk because custom applications can overload apparently harmless names with sensitive content. Name-only classification cannot guarantee that a preserved `theme`, `color_scheme`, or `display_mode` value is actually harmless. Unknown cookies remain redacted by default, and names such as `language`, `lang`, `locale`, `timezone`, `tz`, `cookie_consent`, `consent`, `banner_dismissed`, and `sidebar_state` remain unknown and redacted in milestone 4.
+
 Milestone 3 Cookie headers are parsed only when complete deterministic parsing succeeds. If parsing a non-empty exact non-folded Cookie header is uncertain, the sanitizer must use whole-header fallback instead of partially sanitizing valid-looking pairs and leaving possible secrets exposed. Empty `Cookie:` headers and whitespace-only `Cookie:` headers remain unchanged and produce no finding.
+
+Milestone 4 classification applies only after the complete Cookie header parses safely. Malformed Cookie headers must continue to use whole-header fallback, and individual Cookie names in malformed headers must not be classified or reported.
 
 Folded Cookie headers are unsupported in milestone 3. If an exact `Cookie:` line is immediately followed by a physical line beginning with a space or tab, the folded form remains completely unchanged. This is a residual false-negative risk because folded Cookie values may remain in output. Full folded-header parsing is deferred.
 
@@ -185,6 +195,8 @@ Milestone 3 should add independent Cookie findings that do not overlap with Auth
 
 Milestone 3 approved Cookie markers are `<REDACTED:cookie.value>` and `<REDACTED:cookie.header>`. If an exact approved Cookie marker is used as a complete individual cookie value, the value is already sanitized and produces no finding or count. If an exact approved Cookie marker is used as the complete trimmed Cookie header value, the header is already sanitized and produces no finding or count. The sanitizer must not correct or normalize wrong-context markers. A marker embedded inside a larger raw value is not considered already sanitized and must be redacted. Repeated sanitization must be byte-identical.
 
+Milestone 4 keeps the same Cookie markers and rule IDs. It does not approve category-specific markers or report IDs. Values such as `<REDACTED:cookie.sensitive>` and `<REDACTED:cookie.unknown>` are ordinary raw values and should be redacted as `cookie.value` unless existing parser behavior requires whole-header fallback. Existing `<REDACTED:cookie.value>` and `<REDACTED:cookie.header>` markers remain idempotent, and previously redacted telemetry values cannot be recovered.
+
 ## Dry-Run Behavior
 
 Dry-run mode performs validation, reading, decoding, and detection. It must not create the output file and must not create temporary files. It reports only safe rule identifiers and counts.
@@ -209,6 +221,10 @@ Directory processing is deferred. Future directory mode must define partial-fail
 - Milestone 3 leaves folded Cookie headers unchanged, which may leave sensitive values intact.
 - Milestone 3 may sanitize exact header-like `Cookie:` lines inside message bodies because full HTTP parsing is deferred.
 - Milestone 3 marker collisions are accepted and handled deterministically.
+- Milestone 4 does not guarantee that preserved harmless values are actually harmless.
+- Milestone 4 intentionally redacts telemetry values because they may be persistent identifiers.
+- Milestone 4 unknown Cookie values remain redacted by default, which may reduce evidence usefulness.
+- Milestone 4 Cookie classification is name-only and can be wrong when an application uses a misleading Cookie name.
 - `Set-Cookie` sanitization remains deferred.
 
 ## Explicitly Unsupported Adversarial Filesystem Scenarios

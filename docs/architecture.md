@@ -27,11 +27,13 @@ Milestone 2 generalizes the existing Authorization-header rule but should contin
 
 Milestone 3 adds one concrete Cookie-header responsibility. Keep production behavior in `src/evidence_sanitizer/sanitizer.py` with small Cookie-specific constants and private helpers. A separate `cookie.py` module is not justified unless the approved implementation responsibilities objectively exceed a cohesive helper set. Do not introduce a `rules/` package, plugin registry, parser framework, dependency injection, inheritance hierarchy, configurable rule ordering, generalized precedence engine, or generalized configuration.
 
+Milestone 4 extends the same Cookie-header responsibility with deterministic name-only classification and very limited value preservation. Keep production behavior in `src/evidence_sanitizer/sanitizer.py` with small private classification constants and helpers. The added responsibility does not justify a `cookie.py` module, `rules/` package, configuration file, runtime-editable list, registry, plugin, dependency injection, inheritance hierarchy, generalized policy engine, regex framework, new dependency, or new public API.
+
 Do not create modules such as `paths.py`, `reporting.py`, `textio.py`, `engine.py`, or `rules/` merely because they might be useful later. Their creation should be justified by concrete implemented responsibilities.
 
 ## Data Flow
 
-Milestone 1 through milestone 3 data flow:
+Milestone 1 through milestone 4 data flow:
 
 1. Typer parses `sanitize INPUT --output OUTPUT [--dry-run]`.
 2. The command validates the input path, output path, and output parent directory.
@@ -40,7 +42,7 @@ Milestone 1 through milestone 3 data flow:
 5. The command reads the complete input file in memory, up to 10 MiB.
 6. The command rejects NUL bytes.
 7. The command decodes strict UTF-8 or UTF-8 with BOM.
-8. The sanitizer applies the approved Authorization-header rule set and, in milestone 3, the approved Cookie-header rule set.
+8. The sanitizer applies the approved Authorization-header rule set and, in milestone 3 and milestone 4, the approved Cookie-header rule set.
 9. The sanitizer returns sanitized text plus a safe report.
 10. Dry-run mode prints the safe report and writes nothing.
 11. Normal mode creates the output path exclusively and writes the sanitized bytes.
@@ -126,6 +128,8 @@ Avoid broad names that imply future frameworks. Prefer small concrete names tied
 Milestone 2 should keep Authorization-header parsing and replacement in `sanitizer.py`. A new `authorization.py` module or `rules/` package is not justified unless implementation responsibilities grow beyond one coherent Authorization-header finder.
 
 Milestone 3 should also stay in `sanitizer.py`. The Cookie rule should add only fixed constants, a line-oriented Cookie finder, and small private parsing helpers. It should reuse `Finding`, `SanitizationReport`, `apply_findings`, existing file handling, and right-to-left replacement. No new public data structures are required.
+
+Milestone 4 should continue to stay in `sanitizer.py`. Cookie-name classification should add only small private exact-name sets, private family helpers, and a private classifier. The Cookie parser may return transient Cookie names alongside value spans so the finder can decide whether to preserve or redact each value, but names must not be stored in `Finding`, `SanitizationReport`, CLI output, or reports.
 
 ## Encoding And Newline Behavior
 
@@ -340,6 +344,86 @@ Reports should aggregate Cookie counts from findings by fixed rule ID only:
 Authorization and Cookie findings are independent and non-overlapping by construction because they match different exact header names. The sanitizer should collect Authorization findings and Cookie findings, then apply the combined finding set with the existing right-to-left replacement function. If an overlap is ever produced, treat it as the existing internal sanitization error rather than adding a generalized overlap-resolution system.
 
 Existing Authorization ordering and behavior must remain unchanged. Cookie parsing must not alter Bearer, Basic, or generic Authorization matching, marker policy, counts, or idempotence.
+
+### Milestone 4 Cookie Classification Lifecycle
+
+Milestone 4 adds name-only classification after Milestone 3 has completely and safely parsed a non-folded exact line-start `Cookie` header. Classification must not run on malformed headers, folded Cookie forms, `Set-Cookie`, `X-Cookie`, indented Cookie lines, empty Cookie headers, or whitespace-only Cookie headers.
+
+For each exact non-folded Cookie line in milestone 4:
+
+1. Identify the header value span after the header name, colon, and allowed horizontal whitespace.
+2. Preserve trailing spaces and tabs outside the replacement span.
+3. If the trimmed header value is empty, produce no finding.
+4. If the complete trimmed header value is exactly an approved Cookie marker, produce no finding.
+5. Parse the complete header value before emitting findings or preserving any value.
+6. If any segment or delimiter is malformed or uncertain, emit one `cookie.header` finding for the complete trimmed header value and emit no per-cookie findings.
+7. If every segment parses safely, classify each parsed Cookie name using only the name.
+8. Emit one `cookie.value` finding for each redacted value that is not already an exact approved Cookie marker.
+9. Emit no finding for approved harmless exact names whose values are preserved.
+
+The parser result may carry a transient tuple such as `(name, value_start, value_end)` for each parsed pair. The name is used only for classification and must not be retained in `Finding`, reports, exceptions, logs, or CLI output.
+
+### Milestone 4 Classification Matching
+
+Classification uses the conceptual categories `sensitive`, `telemetry`, `harmless`, and `unknown`. The category is internal policy only and is not a rule ID, marker, report field, or public API.
+
+Classification should use small private constants and helpers:
+
+```python
+COOKIE_CATEGORY_SENSITIVE = "sensitive"
+COOKIE_CATEGORY_TELEMETRY = "telemetry"
+COOKIE_CATEGORY_HARMLESS = "harmless"
+COOKIE_CATEGORY_UNKNOWN = "unknown"
+
+SENSITIVE_COOKIE_NAMES = frozenset(...)
+TELEMETRY_COOKIE_NAMES = frozenset(...)
+HARMLESS_COOKIE_NAMES = frozenset(...)
+
+def _classify_cookie_name(name: str) -> str:
+    ...
+```
+
+The classifier must:
+
+- Match names case-insensitively.
+- Normalize only by ASCII lowercase for internal matching.
+- Preserve original Cookie-name casing in output.
+- Operate only on names already accepted by the Milestone 3 ASCII HTTP-token grammar.
+- Treat `_`, `-`, and `.` as distinct characters.
+- Perform no Unicode normalization.
+- Use no suffix matching.
+- Use no broad substring matching.
+- Use prefix or family matching only for explicitly approved families.
+- Use fixed precedence `sensitive > telemetry > harmless > unknown`.
+- Avoid a generalized precedence engine.
+
+Approved sensitive matching consists of exact case-insensitive names and two families. Exact names are the product-specified lower-case set, including `session`, `sessionid`, `session_id`, `sid`, `auth`, `auth_token`, `access_token`, `refresh_token`, `token`, `jwt`, `sso`, `sso_state`, `username`, `user`, `userid`, `user_id`, `email`, `identity`, `account`, `account_id`, `customer`, `customer_id`, `tenant`, `tenant_id`, `portalauth`, `asp.net_sessionid`, `jsessionid`, `phpsessid`, `connect.sid`, and `laravel_session`. The `aspsessionid` family matches `aspsessionid` plus an optional ASCII alphanumeric suffix only. The `remember_web_` family matches `remember_web_` plus a non-empty suffix using the existing ASCII HTTP-token grammar.
+
+Approved telemetry matching consists of exact case-insensitive names and prefix families. Exact names are `_ga`, `_gid`, `_gat`, `_fbp`, `_fbc`, `_hjid`, `_clck`, `_clsk`, `ajs_anonymous_id`, `ajs_user_id`, `_mkto_trk`, `hubspotutk`, `__hstc`, `__hssc`, and `__hssrc`. Prefix families are `_ga_`, `_gat_`, `_hjsession_`, `_hjsessionuser_`, `amplitude_`, `amp_`, and `mp_`, each with a non-empty suffix. Telemetry values are redacted in milestone 4.
+
+Approved harmless matching consists only of exact case-insensitive names `theme`, `color_scheme`, and `display_mode`. No harmless prefix, suffix, wildcard, or substring matching is approved.
+
+### Milestone 4 Preservation And Findings
+
+Milestone 4 keeps the existing Cookie markers and rule IDs:
+
+```text
+cookie.value
+<REDACTED:cookie.value>
+
+cookie.header
+<REDACTED:cookie.header>
+```
+
+All redacted individual Cookie values use `cookie.value` and `<REDACTED:cookie.value>`, whether the internal category is `sensitive`, `telemetry`, or `unknown`. Preserved harmless values remain byte-for-byte unchanged and produce no finding or count. Do not add category-specific rule IDs or markers such as `cookie.sensitive`, `cookie.unknown`, `cookie.telemetry`, `cookie.harmless`, `<REDACTED:cookie.sensitive>`, or `<REDACTED:cookie.unknown>`.
+
+Existing approved Cookie markers remain idempotent. Category-specific marker-like values are ordinary raw values and should be redacted as `cookie.value` unless the existing parser requires whole-header fallback. Previously redacted telemetry values cannot be recovered and must remain redacted.
+
+### Milestone 4 Fallback And Combination Behavior
+
+Whole-header fallback remains unchanged: a malformed non-empty exact non-folded Cookie header produces one `cookie.header` finding with `<REDACTED:cookie.header>` and no per-cookie classification or per-cookie findings. Folded Cookie forms remain completely unchanged. `Set-Cookie` remains out of scope. Exact line-start Cookie matching, newline preservation, BOM preservation, final-newline behavior, and formatting preservation remain unchanged.
+
+Authorization and Cookie findings remain independent and non-overlapping by construction. Milestone 4 classification must not alter Bearer, Basic, or generic Authorization matching, marker policy, counts, idempotence, or file flow.
 
 ## Exclusive Output Creation Strategy
 

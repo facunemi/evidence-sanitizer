@@ -591,13 +591,308 @@ Required application and CLI test coverage:
 - Existing exit-code behavior remains unchanged.
 - Console-script and module entry points remain consistent.
 
+## Milestone 4: Cookie-Name Classification And Limited Preservation
+
+Milestone 4 adds deterministic Cookie-name classification to safely parsed exact line-start HTTP request `Cookie` headers while preserving all milestone 1, milestone 2, and milestone 3 file-processing, safety, encoding, newline, reporting, CLI, Authorization, parser, fallback, and marker behavior.
+
+Milestone 4 scope:
+
+- Classify Cookie names only after a complete Cookie header parses safely.
+- Use internal categories `sensitive`, `telemetry`, `harmless`, and `unknown`.
+- Redact known sensitive Cookie values.
+- Redact known telemetry Cookie values.
+- Preserve original values only for exact approved harmless names.
+- Redact unknown Cookie values by default.
+- Keep one input file, one explicit output file, and complete-file in-memory processing.
+- Keep deterministic built-in behavior only.
+
+Milestone 4 must not include:
+
+- `Set-Cookie` sanitization.
+- Telemetry-cookie value preservation.
+- Cookie-name classification beyond the approved fixed names and families.
+- User-defined classification rules.
+- Runtime-editable lists.
+- Configuration files.
+- Cookie-name allowlists or denylists outside the approved built-in constants.
+- API-key-specific headers.
+- Email or client-identifier redaction.
+- Directory processing or multiple input files.
+- Overwrite mode.
+- Atomic output replacement guarantee.
+- Metadata preservation.
+- Plugin APIs or plugin registries.
+- Factories, inheritance hierarchies, dependency injection, configurable rule ordering, parser frameworks, generalized policy engines, or generalized precedence engines.
+- Regex frameworks.
+- Value inspection, value decoding, value parsing, or value-based classification.
+- External data downloads.
+- Debug mode.
+- Network features.
+- Telemetry collection.
+- LLM detection.
+- Persistence.
+- New dependencies.
+- New exit codes.
+- Full HTTP message parsing.
+- Folded-header parsing.
+
+Milestone 4 policy matrix:
+
+| Category | Output behavior | Report behavior |
+| --- | --- | --- |
+| `sensitive` | Replace value with `<REDACTED:cookie.value>` | Count as `cookie.value` |
+| `telemetry` | Replace value with `<REDACTED:cookie.value>` | Count as `cookie.value` |
+| `harmless` | Preserve original value for approved exact names only | No finding and no count |
+| `unknown` | Replace value with `<REDACTED:cookie.value>` | Count as `cookie.value` |
+
+Matching semantics:
+
+- Classification depends only on the Cookie name.
+- Cookie values must not be inspected, decoded, parsed, inferred from, or used for classification.
+- Match names case-insensitively.
+- Normalize only by ASCII lowercase for matching.
+- Preserve original Cookie-name casing in output.
+- Operate only on names already accepted by the milestone 3 ASCII HTTP-token Cookie-name grammar.
+- Treat `_`, `-`, and `.` as distinct characters.
+- Perform no Unicode normalization.
+- Use no suffix matching.
+- Use no broad substring matching.
+- Use prefix and family matching only where explicitly approved below.
+- Use fixed precedence `sensitive > telemetry > harmless > unknown`.
+- Do not introduce a generalized precedence engine.
+
+Approved sensitive exact names, matched case-insensitively:
+
+```text
+session
+sessionid
+session_id
+sid
+auth
+auth_token
+access_token
+refresh_token
+token
+jwt
+sso
+sso_state
+username
+user
+userid
+user_id
+email
+identity
+account
+account_id
+customer
+customer_id
+tenant
+tenant_id
+portalauth
+asp.net_sessionid
+jsessionid
+phpsessid
+connect.sid
+laravel_session
+```
+
+Sensitive exact names are exact matches only. Unrelated names such as `superuser_setting`, `sessionStorageEnabled`, `consider`, `tokenizer_mode`, and `author_theme` must not match through substring behavior.
+
+Approved sensitive families:
+
+```text
+aspsessionid
+aspsessionid + optional ASCII alphanumeric suffix
+remember_web_ + non-empty suffix using the existing ASCII HTTP-token grammar
+```
+
+The `aspsessionid` family is case-insensitive and allows examples such as `ASPSESSIONID` and `ASPSESSIONIDABC123`. It must not accept punctuation or arbitrary suffix characters beyond the approved ASCII alphanumeric suffix. The `remember_web_` family is case-insensitive, allows examples such as `remember_web_abc123` and `remember_web_user-token`, and must not match plain `remember_web_`.
+
+Approved telemetry exact names, matched case-insensitively:
+
+```text
+_ga
+_gid
+_gat
+_fbp
+_fbc
+_hjid
+_clck
+_clsk
+ajs_anonymous_id
+ajs_user_id
+_mkto_trk
+hubspotutk
+__hstc
+__hssc
+__hssrc
+```
+
+Approved telemetry prefix families, matched case-insensitively with a non-empty suffix:
+
+```text
+_ga_
+_gat_
+_hjsession_
+_hjsessionuser_
+amplitude_
+amp_
+mp_
+```
+
+Telemetry values remain redacted with the existing `cookie.value` rule and `<REDACTED:cookie.value>` marker. Telemetry values can be persistent browser, user, or device identifiers and may enable correlation, so telemetry value preservation is not approved in milestone 4.
+
+Approved harmless exact names, matched case-insensitively:
+
+```text
+theme
+color_scheme
+display_mode
+```
+
+Only these harmless exact names preserve original values byte-for-byte. No prefix, suffix, wildcard, or substring matching is allowed for harmless names. Examples such as `user_theme`, `theme_token`, `display_mode_session`, and `color_scheme_auth` remain unknown and redacted. Names such as `language`, `lang`, `locale`, `timezone`, `tz`, `cookie_consent`, `consent`, `banner_dismissed`, and `sidebar_state` are not approved harmless names and remain unknown and redacted in milestone 4.
+
+Output and reporting behavior:
+
+- Keep `cookie.value` and `<REDACTED:cookie.value>` for every individual redacted Cookie value.
+- Keep `cookie.header` and `<REDACTED:cookie.header>` for whole-header fallback.
+- Do not add `cookie.sensitive`, `cookie.unknown`, `cookie.telemetry`, `cookie.harmless`, `<REDACTED:cookie.sensitive>`, or `<REDACTED:cookie.unknown>`.
+- Preserved harmless values generate no finding and no count.
+- Telemetry classification generates no special report entry.
+- Classification categories are internal policy only.
+- Reports reflect actual transformations, not classification decisions.
+- Cookie names must never appear in report IDs or report output.
+
+Compatibility and idempotence:
+
+- Existing `<REDACTED:cookie.value>` values remain unchanged as complete individual Cookie values.
+- Existing `<REDACTED:cookie.header>` values remain unchanged as complete trimmed Cookie header values.
+- Previously redacted telemetry values cannot be recovered and remain redacted.
+- Existing sanitized evidence remains byte-identical on repeated sanitization.
+- Embedded approved markers inside larger raw values remain raw and are redacted.
+- Wrong-context existing approved Cookie markers remain unchanged according to the current marker policy.
+- Category-specific marker-like values such as `<REDACTED:cookie.sensitive>` and `<REDACTED:cookie.unknown>` are not approved markers and are redacted as ordinary raw values unless existing parser behavior requires whole-header fallback.
+
+Parser and fallback compatibility:
+
+- Classification applies only after the complete Cookie header parses safely.
+- Complete parse before findings remains required.
+- Malformed headers continue using whole-header fallback.
+- Malformed headers must not be classified per Cookie.
+- No malformed Cookie header is partially sanitized.
+- Folded Cookie forms remain completely unchanged.
+- `Set-Cookie` remains unchanged and out of scope.
+- Exact line-start `Cookie` matching remains unchanged.
+- Existing formatting, UTF-8 BOM, newline, and final-newline behavior remains unchanged.
+
+Accepted milestone 4 limitations:
+
+- Preserving even harmless values carries residual risk because custom applications can overload apparently harmless names.
+- Only `theme`, `color_scheme`, and `display_mode` preserve values.
+- Telemetry values remain redacted because they may enable persistent correlation.
+- Unknown cookies remain redacted.
+- Name-only classification cannot guarantee that a preserved value is actually harmless.
+- Cookie names themselves remain visible for safely parsed headers.
+- Folded Cookie headers remain unsupported and may retain sensitive values.
+- Exact header-like Cookie lines inside bodies may be sanitized because full HTTP parsing remains deferred.
+- `Set-Cookie` remains out of scope.
+- The tool does not guarantee detection or removal of every possible secret.
+
+### Milestone 4 Acceptance Criteria
+
+- Existing Authorization behavior remains unchanged and all existing Authorization regression tests remain valid.
+- Existing Cookie parser behavior remains unchanged except for approved harmless value preservation.
+- Unknown cookies remain redacted with `<REDACTED:cookie.value>`.
+- Telemetry cookies remain redacted with `<REDACTED:cookie.value>`.
+- Only `theme`, `color_scheme`, and `display_mode` preserve values.
+- Harmless matching is exact and case-insensitive.
+- Harmless near misses remain unknown and redacted.
+- Sensitive exact names and approved sensitive families redact values.
+- Sensitive substring near misses remain unknown and redacted.
+- Telemetry exact names and approved telemetry prefix families redact values.
+- Classification uses no value inspection, decoding, parsing, or inference.
+- Classification is case-insensitive and uses only ASCII lowercase for matching.
+- `_`, `-`, and `.` remain distinct for classification.
+- No suffix matching or broad substring matching is approved.
+- Prefix families require valid non-empty suffixes where specified.
+- Complete parse before findings remains required.
+- Malformed Cookie headers still use whole-header fallback and produce no per-Cookie classification.
+- Folded Cookie forms remain completely unchanged.
+- `Set-Cookie` remains unchanged and out of scope.
+- Existing `<REDACTED:cookie.value>` and `<REDACTED:cookie.header>` markers remain idempotent.
+- No new marker or rule ID is added.
+- Preserved harmless values produce no finding or count.
+- Reports contain only existing fixed Cookie IDs `cookie.value` and `cookie.header`.
+- Cookie names never become report IDs and never appear in report output.
+- Existing file safety, dry-run, UTF-8, UTF-8 BOM, LF, CRLF, mixed-newline, final-newline, 10 MiB, NUL-byte, safe-error, and exit-code behavior remains unchanged.
+- No dependency, configuration file, runtime-editable list, plugin, registry, policy engine, network feature, telemetry collection, LLM behavior, persistence, full HTTP parsing, folded-header parsing, directory processing, overwrite mode, or new exit code is introduced.
+- Tests use only synthetic data.
+
+### Milestone 4 Verification Requirements
+
+Expected commands:
+
+```bash
+uv sync
+uv run evidence-sanitizer --help
+uv run python -m evidence_sanitizer --help
+uv run evidence-sanitizer sanitize --help
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src tests
+```
+
+Required unit test coverage:
+
+- Each approved exact sensitive name.
+- Each approved sensitive family.
+- Sensitive near misses that must remain unknown and redacted.
+- Case-insensitive classification.
+- Punctuation distinction for `_`, `-`, and `.`.
+- Fixed precedence behavior.
+- Each approved telemetry exact name.
+- Each approved telemetry prefix family.
+- Telemetry near misses.
+- Each approved harmless exact name.
+- Harmless near misses.
+- Unknown default redaction.
+- Mixed sensitive, telemetry, harmless, and unknown names in one Cookie header.
+- Duplicate names with different casing.
+- Existing Milestone 3 Cookie markers.
+- Category-specific marker-like raw values are not approved markers.
+- Wrong-context existing approved Cookie markers remain unchanged.
+- Idempotence.
+- Previously redacted telemetry values remain redacted.
+- Embedded markers are redacted.
+- Malformed fallback remains unchanged.
+- Folded headers remain unchanged.
+- `Set-Cookie` remains unchanged.
+- No value inspection.
+- No names in report IDs.
+- Authorization regression.
+
+Required application and CLI test coverage:
+
+- Cookie plus Bearer plus Basic plus custom Authorization in one file.
+- Correct fixed counts for `authorization.bearer`, `authorization.basic`, `authorization.other`, `cookie.value`, and `cookie.header` with preserved harmless values excluded from counts.
+- Safe CLI output contains no redacted Cookie values, no source excerpts, and no Cookie names as report IDs.
+- Source remains byte-for-byte unchanged.
+- Dry-run creates no output.
+- Existing output is not overwritten.
+- BOM and newline preservation remain unchanged.
+- Mixed line endings remain unchanged.
+- No-final-newline behavior remains unchanged.
+- Existing exit-code behavior remains unchanged.
+- Console-script and module entry points remain consistent.
+
 ## Future Milestones
 
 Future milestones are deferred and must be approved before implementation.
 
 Possible future topics:
 
-- Cookie-name classification after deterministic categories are approved.
+- Additional Cookie-name classification beyond the fixed milestone 4 categories and lists.
 - `Set-Cookie` header redaction after false-positive behavior is defined.
 - Additional deterministic HTTP header rules, such as selected API-key headers.
 - Email or client-identifier redaction after scope and false-positive behavior are defined.
@@ -611,8 +906,8 @@ Possible future topics:
 ## Functionality Explicitly Deferred
 
 - `Set-Cookie` sanitization.
-- Cookie-name classification, including sensitive, telemetry, harmless, and unknown categories.
-- Telemetry allowlists and selective cookie-value preservation.
+- Cookie-name classification beyond the fixed milestone 4 categories and lists.
+- Telemetry value preservation, telemetry allowlists, and user-defined Cookie policy.
 - API-key-specific header sanitization.
 - Email redaction.
 - Client-identifier redaction.
