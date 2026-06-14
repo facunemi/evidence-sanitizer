@@ -16,9 +16,13 @@ from evidence_sanitizer.sanitizer import (
     REDACTION_MARKER,
     REDACTION_MARKER_AUTHORIZATION_BASIC,
     REDACTION_MARKER_AUTHORIZATION_CREDENTIALS,
+    REDACTION_MARKER_COOKIE_HEADER,
+    REDACTION_MARKER_COOKIE_VALUE,
     RULE_ID_AUTHORIZATION_BASIC,
     RULE_ID_AUTHORIZATION_BEARER,
     RULE_ID_AUTHORIZATION_OTHER,
+    RULE_ID_COOKIE_HEADER,
+    RULE_ID_COOKIE_VALUE,
     SafeError,
     sanitize_file,
 )
@@ -26,7 +30,19 @@ from evidence_sanitizer.sanitizer import (
 TOKEN = "eyJhbGciOiJIUzI1NiJ9.synthetic-token"
 BASIC_TOKEN = "synthetic-basic-token+/="
 CUSTOM_CREDENTIAL = "appId:synthetic-signature:nonce:timestamp"
-SENSITIVE_VALUES = (TOKEN, BASIC_TOKEN, CUSTOM_CREDENTIAL)
+COOKIE_SESSION_VALUE = "synthetic-cookie-session"
+COOKIE_THEME_VALUE = "synthetic-cookie-theme"
+COOKIE_FALLBACK_VALUE = "synthetic-cookie-fallback"
+COOKIE_FALLBACK_THEME_VALUE = "synthetic-cookie-fallback-theme"
+SENSITIVE_VALUES = (
+    TOKEN,
+    BASIC_TOKEN,
+    CUSTOM_CREDENTIAL,
+    COOKIE_SESSION_VALUE,
+    COOKIE_THEME_VALUE,
+    COOKIE_FALLBACK_VALUE,
+    COOKIE_FALLBACK_THEME_VALUE,
+)
 
 
 def assert_source_unchanged(path: Path, expected: bytes) -> None:
@@ -89,6 +105,50 @@ def test_multiple_authorization_schemes_sanitized_and_reported(
 
     assert result.output_written
     assert result.report.counts_by_rule == {
+        RULE_ID_AUTHORIZATION_BEARER: 1,
+        RULE_ID_AUTHORIZATION_BASIC: 1,
+        RULE_ID_AUTHORIZATION_OTHER: 1,
+    }
+    assert_sanitized_output(output_path, expected)
+    assert_source_unchanged(input_path, source)
+
+
+def test_authorization_and_cookie_headers_sanitized_and_reported(
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "evidence.txt"
+    output_path = tmp_path / "evidence.sanitized.txt"
+    source = (
+        "GET /api/profile HTTP/1.1\n"
+        "Host: example.test\n"
+        f"Cookie: session={COOKIE_SESSION_VALUE}; theme={COOKIE_THEME_VALUE}\n"
+        "Cookie: broken="
+        f"{COOKIE_FALLBACK_VALUE}; malformed; theme={COOKIE_FALLBACK_THEME_VALUE}\n"
+        f"Authorization: Bearer {TOKEN}\n"
+        f"Authorization: Basic {BASIC_TOKEN}\n"
+        f"Authorization: AMX {CUSTOM_CREDENTIAL}\n"
+        "Accept: application/json\n"
+    ).encode()
+    expected = (
+        "GET /api/profile HTTP/1.1\n"
+        "Host: example.test\n"
+        f"Cookie: session={REDACTION_MARKER_COOKIE_VALUE}; "
+        f"theme={REDACTION_MARKER_COOKIE_VALUE}\n"
+        f"Cookie: {REDACTION_MARKER_COOKIE_HEADER}\n"
+        f"Authorization: Bearer {REDACTION_MARKER}\n"
+        f"Authorization: Basic {REDACTION_MARKER_AUTHORIZATION_BASIC}\n"
+        "Authorization: AMX "
+        f"{REDACTION_MARKER_AUTHORIZATION_CREDENTIALS}\n"
+        "Accept: application/json\n"
+    ).encode()
+    input_path.write_bytes(source)
+
+    result = sanitize_file(input_path, output_path, dry_run=False)
+
+    assert result.output_written
+    assert result.report.counts_by_rule == {
+        RULE_ID_COOKIE_VALUE: 2,
+        RULE_ID_COOKIE_HEADER: 1,
         RULE_ID_AUTHORIZATION_BEARER: 1,
         RULE_ID_AUTHORIZATION_BASIC: 1,
         RULE_ID_AUTHORIZATION_OTHER: 1,
@@ -207,13 +267,18 @@ def test_unreadable_input_behavior_is_safe(
 def test_dry_run_creates_no_output_and_reports_counts(tmp_path: Path) -> None:
     input_path = tmp_path / "evidence.txt"
     output_path = tmp_path / "evidence.sanitized.txt"
-    source = f"Authorization: Bearer {TOKEN}\n".encode()
+    source = (
+        f"Cookie: session={COOKIE_SESSION_VALUE}\nAuthorization: Bearer {TOKEN}\n"
+    ).encode()
     input_path.write_bytes(source)
 
     result = sanitize_file(input_path, output_path, dry_run=True)
 
     assert not result.output_written
-    assert result.report.counts_by_rule == {RULE_ID_AUTHORIZATION_BEARER: 1}
+    assert result.report.counts_by_rule == {
+        RULE_ID_COOKIE_VALUE: 1,
+        RULE_ID_AUTHORIZATION_BEARER: 1,
+    }
     assert not output_path.exists()
     assert_source_unchanged(input_path, source)
 
@@ -234,8 +299,8 @@ def test_no_match_file_creates_identical_output(tmp_path: Path) -> None:
 def test_utf8_bom_is_preserved(tmp_path: Path) -> None:
     input_path = tmp_path / "evidence.txt"
     output_path = tmp_path / "evidence.sanitized.txt"
-    source_text = f"Authorization: Bearer {TOKEN}\n"
-    expected_text = f"Authorization: Bearer {REDACTION_MARKER}\n"
+    source_text = f"Cookie: session={COOKIE_SESSION_VALUE}\n"
+    expected_text = f"Cookie: session={REDACTION_MARKER_COOKIE_VALUE}\n"
     source = codecs.BOM_UTF8 + source_text.encode()
     expected = codecs.BOM_UTF8 + expected_text.encode()
     input_path.write_bytes(source)
@@ -248,16 +313,18 @@ def test_utf8_bom_is_preserved(tmp_path: Path) -> None:
 def test_lf_crlf_and_final_newline_presence_are_preserved(tmp_path: Path) -> None:
     cases = (
         (
-            f"Authorization: Bearer {TOKEN}\nAccept: application/json\n",
-            f"Authorization: Bearer {REDACTION_MARKER}\nAccept: application/json\n",
+            f"Cookie: session={COOKIE_SESSION_VALUE}\nAccept: application/json\n",
+            f"Cookie: session={REDACTION_MARKER_COOKIE_VALUE}\n"
+            "Accept: application/json\n",
         ),
         (
-            f"Authorization: Bearer {TOKEN}\r\nAccept: application/json\r\n",
-            f"Authorization: Bearer {REDACTION_MARKER}\r\nAccept: application/json\r\n",
+            f"Cookie: session={COOKIE_SESSION_VALUE}\r\nAccept: application/json\r\n",
+            f"Cookie: session={REDACTION_MARKER_COOKIE_VALUE}\r\n"
+            "Accept: application/json\r\n",
         ),
         (
-            f"Authorization: Bearer {TOKEN}",
-            f"Authorization: Bearer {REDACTION_MARKER}",
+            f"Cookie: session={COOKIE_SESSION_VALUE}",
+            f"Cookie: session={REDACTION_MARKER_COOKIE_VALUE}",
         ),
     )
     for index, (source_text, expected_text) in enumerate(cases):
@@ -276,6 +343,7 @@ def test_mixed_newlines_are_preserved_byte_for_byte(tmp_path: Path) -> None:
     source = (
         b"GET /api/profile HTTP/1.1\r\n"
         b"Host: example.test\n"
+        b"Cookie: session=" + COOKIE_SESSION_VALUE.encode() + b"\n"
         b"Authorization: Bearer " + TOKEN.encode() + b"\r\n"
         b"Accept: application/json\n"
         b"Final-Line: no-newline"
@@ -283,6 +351,7 @@ def test_mixed_newlines_are_preserved_byte_for_byte(tmp_path: Path) -> None:
     expected = (
         b"GET /api/profile HTTP/1.1\r\n"
         b"Host: example.test\n"
+        b"Cookie: session=" + REDACTION_MARKER_COOKIE_VALUE.encode() + b"\n"
         b"Authorization: Bearer " + REDACTION_MARKER.encode() + b"\r\n"
         b"Accept: application/json\n"
         b"Final-Line: no-newline"
@@ -292,6 +361,29 @@ def test_mixed_newlines_are_preserved_byte_for_byte(tmp_path: Path) -> None:
     sanitize_file(input_path, output_path, dry_run=False)
 
     assert_sanitized_output(output_path, expected)
+    assert_source_unchanged(input_path, source)
+
+
+def test_file_level_idempotence(tmp_path: Path) -> None:
+    input_path = tmp_path / "evidence.txt"
+    first_output_path = tmp_path / "evidence.sanitized.txt"
+    second_output_path = tmp_path / "evidence.sanitized-again.txt"
+    source = (
+        f"Cookie: session={COOKIE_SESSION_VALUE}; theme={COOKIE_THEME_VALUE}\n"
+        f"Authorization: Bearer {TOKEN}\n"
+    ).encode()
+    input_path.write_bytes(source)
+
+    first_result = sanitize_file(input_path, first_output_path, dry_run=False)
+    first_output = first_output_path.read_bytes()
+    second_result = sanitize_file(first_output_path, second_output_path, dry_run=False)
+
+    assert first_result.report.counts_by_rule == {
+        RULE_ID_COOKIE_VALUE: 2,
+        RULE_ID_AUTHORIZATION_BEARER: 1,
+    }
+    assert second_result.report.counts_by_rule == {}
+    assert second_output_path.read_bytes() == first_output
     assert_source_unchanged(input_path, source)
 
 

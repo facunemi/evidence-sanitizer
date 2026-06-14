@@ -12,10 +12,14 @@ MAX_INPUT_BYTES = 10 * 1024 * 1024
 RULE_ID_AUTHORIZATION_BEARER = "authorization.bearer"
 RULE_ID_AUTHORIZATION_BASIC = "authorization.basic"
 RULE_ID_AUTHORIZATION_OTHER = "authorization.other"
+RULE_ID_COOKIE_VALUE = "cookie.value"
+RULE_ID_COOKIE_HEADER = "cookie.header"
 
 REDACTION_MARKER_AUTHORIZATION_BEARER = "<REDACTED:authorization.bearer>"
 REDACTION_MARKER_AUTHORIZATION_BASIC = "<REDACTED:authorization.basic>"
 REDACTION_MARKER_AUTHORIZATION_CREDENTIALS = "<REDACTED:authorization.credentials>"
+REDACTION_MARKER_COOKIE_VALUE = "<REDACTED:cookie.value>"
+REDACTION_MARKER_COOKIE_HEADER = "<REDACTED:cookie.header>"
 REDACTION_MARKER = REDACTION_MARKER_AUTHORIZATION_BEARER
 APPROVED_REDACTION_MARKERS = frozenset(
     (
@@ -23,6 +27,16 @@ APPROVED_REDACTION_MARKERS = frozenset(
         REDACTION_MARKER_AUTHORIZATION_BASIC,
         REDACTION_MARKER_AUTHORIZATION_CREDENTIALS,
     )
+)
+APPROVED_COOKIE_REDACTION_MARKERS = frozenset(
+    (
+        REDACTION_MARKER_COOKIE_VALUE,
+        REDACTION_MARKER_COOKIE_HEADER,
+    )
+)
+COOKIE_HEADER_NAME = "Cookie"
+HTTP_TOKEN_CHARACTERS = frozenset(
+    "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 )
 
 EXIT_INTERNAL_ERROR = 1
@@ -124,6 +138,210 @@ def find_authorization_credentials(text: str) -> tuple[Finding, ...]:
     return tuple(findings)
 
 
+def find_cookie_values(text: str) -> tuple[Finding, ...]:
+    """Find exact line-start HTTP request Cookie header values."""
+    findings: list[Finding] = []
+
+    # Milestone 3 intentionally remains line-oriented. Full HTTP message
+    # parsing and folded-header parsing are deferred.
+    for line_start, line_content_end, next_line_start in _iter_physical_lines(text):
+        line = text[line_start:line_content_end]
+        value_start_in_line = _cookie_header_value_start(line)
+        if value_start_in_line is None:
+            continue
+        if next_line_start < len(text) and text[next_line_start] in " \t":
+            continue
+
+        value_start = line_start + value_start_in_line
+        header_value = text[value_start:line_content_end]
+        trimmed_value_length = len(header_value.rstrip(" \t"))
+        if trimmed_value_length == 0:
+            continue
+
+        trimmed_value = header_value[:trimmed_value_length]
+        if trimmed_value in APPROVED_COOKIE_REDACTION_MARKERS:
+            continue
+
+        value_spans = _parse_cookie_value_spans(trimmed_value)
+        if value_spans is None:
+            findings.append(
+                Finding(
+                    rule_id=RULE_ID_COOKIE_HEADER,
+                    start=value_start,
+                    end=value_start + trimmed_value_length,
+                    replacement=REDACTION_MARKER_COOKIE_HEADER,
+                )
+            )
+            continue
+
+        for value_relative_start, value_relative_end in value_spans:
+            value = trimmed_value[value_relative_start:value_relative_end]
+            if value in APPROVED_COOKIE_REDACTION_MARKERS:
+                continue
+            findings.append(
+                Finding(
+                    rule_id=RULE_ID_COOKIE_VALUE,
+                    start=value_start + value_relative_start,
+                    end=value_start + value_relative_end,
+                    replacement=REDACTION_MARKER_COOKIE_VALUE,
+                )
+            )
+
+    return tuple(findings)
+
+
+def _iter_physical_lines(text: str) -> tuple[tuple[int, int, int], ...]:
+    """Return physical lines as start, content end, and next-line start."""
+    lines: list[tuple[int, int, int]] = []
+    position = 0
+
+    while position < len(text):
+        line_start = position
+        while position < len(text) and text[position] not in "\r\n":
+            position += 1
+        line_content_end = position
+
+        if position < len(text):
+            if text[position] == "\r" and position + 1 < len(text):
+                if text[position + 1] == "\n":
+                    position += 2
+                else:
+                    position += 1
+            else:
+                position += 1
+
+        lines.append((line_start, line_content_end, position))
+
+    return tuple(lines)
+
+
+def _cookie_header_value_start(line: str) -> int | None:
+    """Return the Cookie value start offset within a physical line."""
+    if len(line) < len(COOKIE_HEADER_NAME):
+        return None
+    if line[: len(COOKIE_HEADER_NAME)].lower() != COOKIE_HEADER_NAME.lower():
+        return None
+
+    position = len(COOKIE_HEADER_NAME)
+    while position < len(line) and line[position] in " \t":
+        position += 1
+    if position >= len(line) or line[position] != ":":
+        return None
+
+    position += 1
+    while position < len(line) and line[position] in " \t":
+        position += 1
+    return position
+
+
+def _parse_cookie_value_spans(value: str) -> tuple[tuple[int, int], ...] | None:
+    """Parse a complete Cookie value and return replaceable value spans."""
+    spans: list[tuple[int, int]] = []
+    position = 0
+
+    while position < len(value):
+        name_start = position
+        while position < len(value) and value[position] not in " \t=;":
+            position += 1
+        if not _is_cookie_name(value[name_start:position]):
+            return None
+
+        while position < len(value) and value[position] in " \t":
+            position += 1
+        if position >= len(value) or value[position] != "=":
+            return None
+
+        position += 1
+        while position < len(value) and value[position] in " \t":
+            position += 1
+
+        if position < len(value) and value[position] == '"':
+            parsed = _parse_quoted_cookie_value(value, position)
+        else:
+            parsed = _parse_unquoted_cookie_value(value, position)
+        if parsed is None:
+            return None
+
+        value_start, value_end, position = parsed
+        spans.append((value_start, value_end))
+
+        if position == len(value):
+            break
+        if value[position] != ";":
+            return None
+
+        position += 1
+        while position < len(value) and value[position] in " \t":
+            position += 1
+        if position >= len(value):
+            return None
+
+    return tuple(spans) if spans else None
+
+
+def _parse_quoted_cookie_value(
+    value: str, quote_start: int
+) -> tuple[int, int, int] | None:
+    """Parse a quoted cookie value without decoding or normalizing it."""
+    payload_start = quote_start + 1
+    position = payload_start
+
+    while position < len(value):
+        character = value[position]
+        if character == '"':
+            payload_end = position
+            position += 1
+            while position < len(value) and value[position] in " \t":
+                position += 1
+            if position < len(value) and value[position] != ";":
+                return None
+            return payload_start, payload_end, position
+        if character == "\\":
+            if position + 1 >= len(value):
+                return None
+            escaped = value[position + 1]
+            if _is_unsupported_cookie_control(escaped):
+                return None
+            position += 2
+            continue
+        if _is_unsupported_cookie_control(character):
+            return None
+        position += 1
+
+    return None
+
+
+def _parse_unquoted_cookie_value(
+    value: str, value_start: int
+) -> tuple[int, int, int] | None:
+    """Parse an unquoted cookie value up to a semicolon or value end."""
+    position = value_start
+    while position < len(value) and value[position] != ";":
+        position += 1
+
+    value_end = position
+    while value_end > value_start and value[value_end - 1] in " \t":
+        value_end -= 1
+    for character in value[value_start:value_end]:
+        if character in " \t" or _is_unsupported_cookie_control(character):
+            return None
+
+    return value_start, value_end, position
+
+
+def _is_cookie_name(value: str) -> bool:
+    """Return whether a cookie name uses the approved ASCII token grammar."""
+    return bool(value) and all(
+        character in HTTP_TOKEN_CHARACTERS for character in value
+    )
+
+
+def _is_unsupported_cookie_control(character: str) -> bool:
+    """Return whether a Cookie value character is an unsupported control."""
+    codepoint = ord(character)
+    return codepoint < 32 or codepoint == 127
+
+
 def _is_single_credential_token(value: str) -> bool:
     """Return whether a specialized credential is one non-whitespace token."""
     return not any(character.isspace() for character in value)
@@ -158,8 +376,8 @@ def apply_findings(text: str, findings: Sequence[Finding]) -> str:
 
 
 def sanitize_text(text: str) -> tuple[str, SanitizationReport]:
-    """Sanitize decoded text with the approved Authorization rules."""
-    findings = find_authorization_credentials(text)
+    """Sanitize decoded text with the approved rules."""
+    findings = find_authorization_credentials(text) + find_cookie_values(text)
     sanitized = apply_findings(text, findings)
     counts: dict[str, int] = {}
     for finding in findings:

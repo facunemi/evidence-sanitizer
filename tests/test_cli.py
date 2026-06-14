@@ -11,6 +11,8 @@ from evidence_sanitizer.sanitizer import (
     REDACTION_MARKER,
     REDACTION_MARKER_AUTHORIZATION_BASIC,
     REDACTION_MARKER_AUTHORIZATION_CREDENTIALS,
+    REDACTION_MARKER_COOKIE_HEADER,
+    REDACTION_MARKER_COOKIE_VALUE,
 )
 
 PRODUCT_DESCRIPTION = (
@@ -21,10 +23,16 @@ ENTRYPOINTS = ("console", "module")
 SYNTHETIC_CREDENTIAL = "eyJhbGciOiJIUzI1NiJ9.synthetic-token"
 SYNTHETIC_BASIC_CREDENTIAL = "synthetic-basic-token+/="
 SYNTHETIC_CUSTOM_CREDENTIAL = "appId:synthetic-signature:nonce:timestamp"
+SYNTHETIC_COOKIE_VALUE = "synthetic-cookie-value"
+SYNTHETIC_SECOND_COOKIE_VALUE = "synthetic-second-cookie-value"
+SYNTHETIC_FALLBACK_COOKIE_VALUE = "synthetic-fallback-cookie-value"
 SENSITIVE_VALUES = (
     SYNTHETIC_CREDENTIAL,
     SYNTHETIC_BASIC_CREDENTIAL,
     SYNTHETIC_CUSTOM_CREDENTIAL,
+    SYNTHETIC_COOKIE_VALUE,
+    SYNTHETIC_SECOND_COOKIE_VALUE,
+    SYNTHETIC_FALLBACK_COOKIE_VALUE,
 )
 
 
@@ -123,6 +131,9 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
         source = (
             "GET /api/profile HTTP/1.1\n"
             "Host: example.test\n"
+            f"Cookie: session={SYNTHETIC_COOKIE_VALUE}; "
+            f"theme={SYNTHETIC_SECOND_COOKIE_VALUE}\n"
+            f"Cookie: bad={SYNTHETIC_FALLBACK_COOKIE_VALUE}; malformed\n"
             f"Authorization: Bearer {SYNTHETIC_CREDENTIAL}\n"
             f"Authorization: Basic {SYNTHETIC_BASIC_CREDENTIAL}\n"
             f"Authorization: AMX {SYNTHETIC_CUSTOM_CREDENTIAL}\n"
@@ -131,6 +142,9 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
         expected = (
             "GET /api/profile HTTP/1.1\n"
             "Host: example.test\n"
+            f"Cookie: session={REDACTION_MARKER_COOKIE_VALUE}; "
+            f"theme={REDACTION_MARKER_COOKIE_VALUE}\n"
+            f"Cookie: {REDACTION_MARKER_COOKIE_HEADER}\n"
             f"Authorization: Bearer {REDACTION_MARKER}\n"
             f"Authorization: Basic {REDACTION_MARKER_AUTHORIZATION_BASIC}\n"
             "Authorization: AMX "
@@ -150,7 +164,10 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
         assert "authorization.basic: 1" in output
         assert "authorization.bearer: 1" in output
         assert "authorization.other: 1" in output
+        assert "cookie.header: 1" in output
+        assert "cookie.value: 2" in output
         assert "Authorization:" not in output
+        assert "Cookie:" not in output
         assert_output_bytes(output_path, expected)
         assert_file_unchanged(input_path, source)
 
@@ -161,7 +178,9 @@ def test_sanitize_dry_run_reports_counts_without_creating_output(
     input_path = tmp_path / "evidence.txt"
     output_path = tmp_path / "evidence.sanitized.txt"
     input_path.write_text(
-        f"Authorization: Bearer {SYNTHETIC_CREDENTIAL}\n", encoding="utf-8"
+        f"Cookie: session={SYNTHETIC_COOKIE_VALUE}\n"
+        f"Authorization: Bearer {SYNTHETIC_CREDENTIAL}\n",
+        encoding="utf-8",
     )
 
     result = run_entrypoint(
@@ -174,13 +193,16 @@ def test_sanitize_dry_run_reports_counts_without_creating_output(
     output = combined_output(result)
     assert "Dry run: no output written" in output
     assert "authorization.bearer: 1" in output
+    assert "cookie.value: 1" in output
     assert not output_path.exists()
 
 
 def test_sanitize_no_match_succeeds_and_reports_none(tmp_path: Path) -> None:
     input_path = tmp_path / "notes.txt"
     output_path = tmp_path / "notes.sanitized.txt"
-    source = b"The documentation says to use Bearer authentication.\n"
+    source = (
+        b"The documentation says to use Bearer authentication and Cookie headers.\n"
+    )
     input_path.write_bytes(source)
 
     result = run_entrypoint(
