@@ -1,14 +1,20 @@
-"""Behavioral tests for the Milestone 0 CLI skeleton."""
+"""Behavioral tests for the CLI."""
 
 import subprocess
 import sys
 from collections.abc import Sequence
+from pathlib import Path
+
+import pytest
+
+from evidence_sanitizer.sanitizer import REDACTION_MARKER
 
 PRODUCT_DESCRIPTION = (
     "Local-first CLI for creating sanitized copies of authorized "
     "penetration-testing evidence."
 )
 ENTRYPOINTS = ("console", "module")
+SYNTHETIC_CREDENTIAL = "eyJhbGciOiJIUzI1NiJ9.synthetic-token"
 
 
 def run_entrypoint(
@@ -47,12 +53,22 @@ def assert_rejected(
     assert expected_text in output
 
 
-def assert_unknown_command(
-    result: subprocess.CompletedProcess[str], command_name: str
-) -> None:
+def assert_no_cli_leak(result: subprocess.CompletedProcess[str]) -> None:
     output = combined_output(result)
-    assert_rejected(result, command_name)
-    assert "No such command" in output
+    if SYNTHETIC_CREDENTIAL in output:
+        pytest.fail("CLI output leaked synthetic credential")
+
+
+def assert_file_unchanged(path: Path, expected: bytes) -> None:
+    if path.read_bytes() != expected:
+        pytest.fail("source file changed")
+
+
+def assert_output_bytes(path: Path, expected: bytes) -> None:
+    actual = path.read_bytes()
+    if SYNTHETIC_CREDENTIAL.encode() in actual:
+        pytest.fail("sanitized output leaked synthetic credential")
+    assert actual == expected
 
 
 def test_root_help_exits_zero_and_contains_description() -> None:
@@ -76,12 +92,143 @@ def test_no_argument_execution_displays_help_and_exits_zero() -> None:
         assert_help_displayed(run_entrypoint(entrypoint, []))
 
 
-def test_sanitize_is_rejected_as_unknown_command() -> None:
+def test_sanitize_help_is_available() -> None:
     for entrypoint in ENTRYPOINTS:
-        assert_unknown_command(run_entrypoint(entrypoint, ["sanitize"]), "sanitize")
+        result = run_entrypoint(entrypoint, ["sanitize", "--help"])
+        output = combined_output(result)
+
+        assert result.returncode == 0, output
+        assert "sanitize" in output
+        assert "--output" in output
+        assert "--dry-run" in output
 
 
-def test_milestone_one_options_are_not_accepted() -> None:
+def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> None:
+    for entrypoint in ENTRYPOINTS:
+        case_dir = tmp_path / entrypoint
+        case_dir.mkdir()
+        input_path = case_dir / "evidence.txt"
+        output_path = case_dir / "evidence.sanitized.txt"
+        source = (
+            "GET /api/profile HTTP/1.1\n"
+            "Host: example.test\n"
+            f"Authorization: Bearer {SYNTHETIC_CREDENTIAL}\n"
+            "Accept: application/json\n"
+        ).encode()
+        expected = source.replace(
+            SYNTHETIC_CREDENTIAL.encode(), REDACTION_MARKER.encode()
+        )
+        input_path.write_bytes(source)
+
+        result = run_entrypoint(
+            entrypoint, ["sanitize", str(input_path), "--output", str(output_path)]
+        )
+
+        assert_no_cli_leak(result)
+        assert result.returncode == 0
+        output = combined_output(result)
+        assert "Rules triggered:" in output
+        assert "authorization.bearer: 1" in output
+        assert "Authorization:" not in output
+        assert_output_bytes(output_path, expected)
+        assert_file_unchanged(input_path, source)
+
+
+def test_sanitize_dry_run_reports_counts_without_creating_output(
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "evidence.txt"
+    output_path = tmp_path / "evidence.sanitized.txt"
+    input_path.write_text(
+        f"Authorization: Bearer {SYNTHETIC_CREDENTIAL}\n", encoding="utf-8"
+    )
+
+    result = run_entrypoint(
+        "console",
+        ["sanitize", str(input_path), "--output", str(output_path), "--dry-run"],
+    )
+
+    assert_no_cli_leak(result)
+    assert result.returncode == 0
+    output = combined_output(result)
+    assert "Dry run: no output written" in output
+    assert "authorization.bearer: 1" in output
+    assert not output_path.exists()
+
+
+def test_sanitize_no_match_succeeds_and_reports_none(tmp_path: Path) -> None:
+    input_path = tmp_path / "notes.txt"
+    output_path = tmp_path / "notes.sanitized.txt"
+    source = b"The documentation says to use Bearer authentication.\n"
+    input_path.write_bytes(source)
+
+    result = run_entrypoint(
+        "console", ["sanitize", str(input_path), "--output", str(output_path)]
+    )
+
+    assert result.returncode == 0, combined_output(result)
+    assert "Rules triggered: none" in combined_output(result)
+    assert output_path.read_bytes() == source
+
+
+def test_sanitize_requires_output_option(tmp_path: Path) -> None:
+    input_path = tmp_path / "evidence.txt"
+    input_path.write_text("no findings\n", encoding="utf-8")
+
+    result = run_entrypoint("console", ["sanitize", str(input_path)])
+
+    assert result.returncode == 2, combined_output(result)
+    assert "output" in combined_output(result).lower()
+
+
+def test_sanitize_rejects_extra_input_argument(tmp_path: Path) -> None:
+    input_path = tmp_path / "evidence.txt"
+    extra_path = tmp_path / "extra.txt"
+    output_path = tmp_path / "evidence.sanitized.txt"
+    input_path.write_text("no findings\n", encoding="utf-8")
+    extra_path.write_text("no findings\n", encoding="utf-8")
+
+    result = run_entrypoint(
+        "console",
+        ["sanitize", str(input_path), str(extra_path), "--output", str(output_path)],
+    )
+
+    assert result.returncode == 2, combined_output(result)
+
+
+def test_sanitize_existing_output_exits_three_without_leaking(
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "evidence.txt"
+    output_path = tmp_path / "evidence.sanitized.txt"
+    input_path.write_text(
+        f"Authorization: Bearer {SYNTHETIC_CREDENTIAL}\n", encoding="utf-8"
+    )
+    output_path.write_text("existing\n", encoding="utf-8")
+
+    result = run_entrypoint(
+        "console", ["sanitize", str(input_path), "--output", str(output_path)]
+    )
+
+    assert_no_cli_leak(result)
+    assert result.returncode == 3
+    assert "output file already exists" in combined_output(result)
+
+
+def test_sanitize_invalid_input_exits_four(tmp_path: Path) -> None:
+    input_path = tmp_path / "invalid.bin"
+    output_path = tmp_path / "invalid.sanitized.txt"
+    input_path.write_bytes(b"\xff")
+
+    result = run_entrypoint(
+        "console", ["sanitize", str(input_path), "--output", str(output_path)]
+    )
+
+    assert result.returncode == 4, combined_output(result)
+    assert "valid UTF-8" in combined_output(result)
+
+
+def test_root_does_not_accept_sanitize_options() -> None:
     for entrypoint in ENTRYPOINTS:
         for option in ("--output", "--dry-run"):
             assert_rejected(run_entrypoint(entrypoint, [option]), option)
