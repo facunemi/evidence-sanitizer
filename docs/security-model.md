@@ -3,7 +3,7 @@
 ## Protected Assets
 
 - Original evidence files.
-- Detected sensitive values, including Bearer tokens, Basic credentials, custom or structured Authorization credentials, and future supported secret types.
+- Detected sensitive values, including Bearer tokens, Basic credentials, custom or structured Authorization credentials, Cookie values, and future supported secret types.
 - Sanitized output integrity.
 - User trust that reported findings do not leak secret contents.
 - Local filesystem state at source and destination paths.
@@ -37,6 +37,7 @@
 - Detected values must never appear in terminal output, reports, exceptions, tracebacks, test snapshots, or logs.
 - Findings and reports must not store matched secret values.
 - Reports for generic Authorization schemes must not include custom scheme names as rule identifiers.
+- Reports for Cookie findings must use only fixed rule identifiers and must not derive rule identifiers from cookie names.
 - The tool must not perform network calls or telemetry.
 - The first implementation must not use LLM detection.
 - Tests must use synthetic data only.
@@ -61,6 +62,8 @@ Safe output must not include:
 - Decoded input snippets.
 - Replacement previews with surrounding evidence.
 - Custom Authorization scheme names in report rule identifiers.
+- Cookie values or Cookie source excerpts.
+- Cookie names as dynamic report identifiers.
 
 Sensitive values must not be accepted as command-line arguments. CLI arguments should be limited to paths and flags so secrets are not encouraged to appear in shell history or process listings.
 
@@ -146,9 +149,23 @@ Full HTTP header/body boundary parsing is deferred. As a result, an exact header
 
 Basic credentials are sensitive but are not decoded or validated. Generic structured credentials, such as Digest, AWS, AMX, OAuth, Signature, or custom parameters, are sensitive and are redacted as one whole credential section without parsing individual parameters.
 
+Milestone 3 expands only to exact line-start HTTP request `Cookie` header lines. It does not add `Set-Cookie`, API-key-specific header, email, or client-identifier sanitization. It does not add cookie-name classification, sensitive/telemetry/harmless/unknown categories, telemetry allowlists, or selective cookie-value preservation.
+
+Cookie values are sensitive and must be redacted when a supported Cookie line is sanitized. Safely parsed cookie names are intentionally preserved for evidence usefulness, but preserved names may disclose framework details, authentication mechanisms, identity concepts, tenancy concepts, and application internals. Examples include `ASP.NET_SessionId`, `JSESSIONID`, `username`, `email`, `customerId`, `tenant`, and `portalAuth`. Cookie-name classification is deferred to milestone 4.
+
+Milestone 3 Cookie headers are parsed only when complete deterministic parsing succeeds. If parsing a non-empty exact non-folded Cookie header is uncertain, the sanitizer must use whole-header fallback instead of partially sanitizing valid-looking pairs and leaving possible secrets exposed. Empty `Cookie:` headers and whitespace-only `Cookie:` headers remain unchanged and produce no finding.
+
+Folded Cookie headers are unsupported in milestone 3. If an exact `Cookie:` line is immediately followed by a physical line beginning with a space or tab, the folded form remains completely unchanged. This is a residual false-negative risk because folded Cookie values may remain in output. Full folded-header parsing is deferred.
+
+Full HTTP header/body boundary parsing remains deferred in milestone 3. As a result, an exact header-like `Cookie:` line inside a message body may be sanitized. This is an accepted false-positive risk for milestone 3.
+
+NUL remains rejected by the existing input-validation path. CR and LF are line delimiters, not Cookie-value characters. Other unsupported control characters inside a Cookie value trigger whole-header fallback rather than a new global error or a new exit code.
+
 ## Regex Risks
 
 Regex can be appropriate for the milestone 1 bearer rule and milestone 2 Authorization-header finder if patterns are line-oriented, bounded, and avoid nested quantifiers. Tests should include long non-matching lines and malformed header-like lines to reduce catastrophic-backtracking risk.
+
+Milestone 3 Cookie parsing should use a bounded line detector plus a deterministic scanner for the header value. The scanner should parse complete Cookie values before emitting per-value findings. Performance tests are required only if the chosen implementation creates realistic risk, such as catastrophic backtracking or unbounded parsing behavior.
 
 Regex is not the only approved parsing mechanism. Future structured formats may require parsers or purpose-built scanners instead of broad regular expressions.
 
@@ -163,6 +180,10 @@ Replacement-token collisions are possible if the original evidence already conta
 Milestone 2 should use one coherent Authorization-header finder that produces at most one finding per Authorization line. Bearer and Basic branches must not fall through to the generic branch when their specialized validation fails. Generic fallback applies only to schemes other than Bearer and Basic.
 
 Milestone 2 approved markers are `<REDACTED:authorization.bearer>`, `<REDACTED:authorization.basic>`, and `<REDACTED:authorization.credentials>`. If the complete credential section is exactly any approved marker, the value is already sanitized and produces no finding or count, even when the marker appears under a different scheme. The sanitizer must not correct or normalize wrong-scheme markers. A marker embedded inside a larger raw credential value is not considered already sanitized.
+
+Milestone 3 should add independent Cookie findings that do not overlap with Authorization findings by construction. The combined finding set should continue to use right-to-left replacement, and any overlap should remain an internal sanitization error rather than introducing a generalized overlap-resolution system.
+
+Milestone 3 approved Cookie markers are `<REDACTED:cookie.value>` and `<REDACTED:cookie.header>`. If an exact approved Cookie marker is used as a complete individual cookie value, the value is already sanitized and produces no finding or count. If an exact approved Cookie marker is used as the complete trimmed Cookie header value, the header is already sanitized and produces no finding or count. The sanitizer must not correct or normalize wrong-context markers. A marker embedded inside a larger raw value is not considered already sanitized and must be redacted. Repeated sanitization must be byte-identical.
 
 ## Dry-Run Behavior
 
@@ -183,6 +204,12 @@ Directory processing is deferred. Future directory mode must define partial-fail
 - Binary detection is limited and incomplete by design.
 - Milestone 2 does not guarantee detection of every Authorization-like credential or every possible secret.
 - Milestone 2 marker collisions are accepted and handled deterministically.
+- Milestone 3 does not guarantee detection of every Cookie-like value or every possible secret.
+- Milestone 3 intentionally preserves safely parsed Cookie names, which may disclose application structure.
+- Milestone 3 leaves folded Cookie headers unchanged, which may leave sensitive values intact.
+- Milestone 3 may sanitize exact header-like `Cookie:` lines inside message bodies because full HTTP parsing is deferred.
+- Milestone 3 marker collisions are accepted and handled deterministically.
+- `Set-Cookie` sanitization remains deferred.
 
 ## Explicitly Unsupported Adversarial Filesystem Scenarios
 

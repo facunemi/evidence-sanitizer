@@ -25,11 +25,13 @@ Milestone 1 may introduce additional modules only as responsibilities become rea
 
 Milestone 2 generalizes the existing Authorization-header rule but should continue to use the same small module boundary. The added responsibility is still one coherent Authorization-header sanitizer, so it does not justify a `rules/` package, plugin registry, factories, dependency injection, inheritance hierarchy, generalized precedence engine, or generalized configuration.
 
+Milestone 3 adds one concrete Cookie-header responsibility. Keep production behavior in `src/evidence_sanitizer/sanitizer.py` with small Cookie-specific constants and private helpers. A separate `cookie.py` module is not justified unless the approved implementation responsibilities objectively exceed a cohesive helper set. Do not introduce a `rules/` package, plugin registry, parser framework, dependency injection, inheritance hierarchy, configurable rule ordering, generalized precedence engine, or generalized configuration.
+
 Do not create modules such as `paths.py`, `reporting.py`, `textio.py`, `engine.py`, or `rules/` merely because they might be useful later. Their creation should be justified by concrete implemented responsibilities.
 
 ## Data Flow
 
-Milestone 1 and milestone 2 data flow:
+Milestone 1 through milestone 3 data flow:
 
 1. Typer parses `sanitize INPUT --output OUTPUT [--dry-run]`.
 2. The command validates the input path, output path, and output parent directory.
@@ -38,7 +40,7 @@ Milestone 1 and milestone 2 data flow:
 5. The command reads the complete input file in memory, up to 10 MiB.
 6. The command rejects NUL bytes.
 7. The command decodes strict UTF-8 or UTF-8 with BOM.
-8. The sanitizer applies the approved Authorization-header rule set for the active milestone.
+8. The sanitizer applies the approved Authorization-header rule set and, in milestone 3, the approved Cookie-header rule set.
 9. The sanitizer returns sanitized text plus a safe report.
 10. Dry-run mode prints the safe report and writes nothing.
 11. Normal mode creates the output path exclusively and writes the sanitized bytes.
@@ -80,7 +82,7 @@ These are public design concepts, not a requirement to create separate modules o
 
 Findings should store:
 
-- `rule_id`: stable identifier, such as `authorization.bearer`, `authorization.basic`, or `authorization.other`.
+- `rule_id`: stable identifier, such as `authorization.bearer`, `authorization.basic`, `authorization.other`, `cookie.value`, or `cookie.header`.
 - `start`: start offset in decoded text.
 - `end`: end offset in decoded text.
 - `replacement`: deterministic replacement text.
@@ -122,6 +124,8 @@ Milestone 1 boundaries should be introduced only when the code becomes difficult
 Avoid broad names that imply future frameworks. Prefer small concrete names tied to implemented behavior.
 
 Milestone 2 should keep Authorization-header parsing and replacement in `sanitizer.py`. A new `authorization.py` module or `rules/` package is not justified unless implementation responsibilities grow beyond one coherent Authorization-header finder.
+
+Milestone 3 should also stay in `sanitizer.py`. The Cookie rule should add only fixed constants, a line-oriented Cookie finder, and small private parsing helpers. It should reuse `Finding`, `SanitizationReport`, `apply_findings`, existing file handling, and right-to-left replacement. No new public data structures are required.
 
 ## Encoding And Newline Behavior
 
@@ -235,6 +239,107 @@ Reports should aggregate counts from findings by fixed rule ID only:
 - `authorization.other`
 
 Counts represent one redacted Authorization credential section per matching header line. Reports must not include credential values, source excerpts, replacement previews, or custom scheme names.
+
+## Cookie Header Rules
+
+Milestone 3 supports only exact line-start HTTP request `Cookie` header lines. It preserves safely parsed cookie names and as much delimiter formatting as safely possible while replacing every cookie value. If complete deterministic parsing fails, it replaces the complete trimmed header value with a whole-header fallback marker instead of partially sanitizing the line.
+
+### Milestone 3 Header Detection Grammar
+
+Use one line-oriented finder in `sanitizer.py` for Cookie headers. The header detector should:
+
+- Match `Cookie` case-insensitively.
+- Match only at decoded text offset `0` or immediately after `\n`.
+- Allow spaces and tabs between `Cookie` and `:`.
+- Allow spaces and tabs after `:`.
+- Preserve header-name casing, spacing around `:`, trailing spaces and tabs, LF, CRLF, mixed newline sequences, UTF-8 BOM state, and final-newline state.
+- Not match `Set-Cookie`, `X-Cookie`, indented Cookie lines, folded continuation lines, or prose containing the word `Cookie`.
+
+Exact header-like `Cookie:` lines inside message bodies may be sanitized because full HTTP body-boundary parsing remains deferred.
+
+### Milestone 3 Complete-Parse Lifecycle
+
+For each exact non-folded Cookie line:
+
+1. Identify the header value span after the header name, colon, and allowed horizontal whitespace.
+2. Preserve trailing spaces and tabs outside the replacement span.
+3. If the trimmed header value is empty, produce no finding.
+4. If the complete trimmed header value is exactly an approved Cookie marker, produce no finding.
+5. Parse the complete header value before emitting any per-value findings.
+6. If every segment parses safely, emit one `cookie.value` finding for each cookie value that is not already an exact approved Cookie marker.
+7. If any segment or delimiter is malformed or uncertain, emit one `cookie.header` finding for the complete trimmed header value and emit no `cookie.value` findings for that line.
+
+This complete-parse-before-findings lifecycle is required to avoid partial sanitization. A malformed segment mixed with valid segments must not leave raw cookie values exposed next to sanitized values.
+
+### Milestone 3 Cookie Name Grammar
+
+Cookie names must be non-empty and use only the ASCII HTTP token character set:
+
+```text
+!#$%&'*+-.^_`|~0-9A-Za-z
+```
+
+The `$` character is allowed because it is part of the HTTP token character set. Non-ASCII names, empty names, and names containing characters outside this grammar trigger whole-header fallback. Cookie names are preserved only when the complete header value parses safely.
+
+### Milestone 3 Cookie Value Scanner
+
+A safely parsed Cookie header consists of one or more non-empty `name=value` pairs separated by semicolons. The first `=` separates name from value. The scanner should allow and preserve spaces or tabs around `=`, spaces or tabs around `;`, original pair order, duplicate names, and trailing horizontal whitespace at the end of the header.
+
+Unquoted values may be empty and may contain additional `=`, commas, colons, slashes, printable punctuation other than semicolons, and non-ASCII text. Unquoted values end at the next semicolon or at the end of the header value before trailing horizontal whitespace.
+
+Quoted values are supported. The scanner should preserve the surrounding quote characters and replace only the quoted payload. Semicolons inside quoted values are part of the value, not delimiters. Valid escaped characters inside quoted values are supported. Missing closing quotes, dangling escapes, and non-horizontal junk after the closing quote before `;` or line end trigger whole-header fallback.
+
+NUL remains rejected by the existing input-validation path. CR and LF remain line delimiters, not Cookie-value characters. Other unsupported control characters inside a Cookie value trigger whole-header fallback rather than a new global error.
+
+### Milestone 3 Fallback Semantics
+
+Whole-header fallback uses rule ID `cookie.header` and marker `<REDACTED:cookie.header>`. It replaces the complete trimmed Cookie header value, preserving the header name, spacing around `:`, leading horizontal whitespace after `:`, trailing spaces and tabs, and line ending.
+
+Fallback triggers include:
+
+- Missing `=`.
+- Empty name.
+- Leading semicolon.
+- Trailing semicolon.
+- Consecutive semicolons.
+- Malformed segment mixed with valid segments.
+- Malformed quoted syntax.
+- Missing closing quote.
+- Dangling escape.
+- Invalid non-ASCII cookie name.
+- Unsupported control character.
+- Junk after a closing quote.
+- Any other condition that prevents complete safe parsing.
+
+A fallback header produces no `cookie.value` findings. Empty `Cookie:` headers and `Cookie:` headers followed only by spaces or tabs remain unchanged and produce no finding.
+
+Folded Cookie headers are unsupported in milestone 3. If an exact `Cookie:` line is immediately followed by a physical line beginning with a space or tab, leave the entire folded form unchanged. Do not sanitize only the first physical line. Full folded-header parsing is deferred.
+
+### Milestone 3 Idempotence And Marker Policy
+
+Approved Cookie markers are:
+
+```text
+<REDACTED:cookie.value>
+<REDACTED:cookie.header>
+```
+
+If an exact approved Cookie marker is used as a complete individual cookie value, the value is already sanitized and the finder should produce no finding. If an exact approved Cookie marker is used as the complete trimmed Cookie header value, the header is already sanitized and the finder should produce no finding. This applies even when the marker is used in an unexpected Cookie context. The sanitizer must not correct or normalize wrong-context markers. A marker embedded inside a larger raw value is not already sanitized and must be redacted. Trailing spaces and tabs after exact markers are preserved. Repeated sanitization must produce byte-identical output.
+
+### Milestone 3 Reporting Aggregation
+
+Reports should aggregate Cookie counts from findings by fixed rule ID only:
+
+- `cookie.value`
+- `cookie.header`
+
+`cookie.value` counts each individual cookie value actually replaced. `cookie.header` counts each Cookie header line changed through whole-header fallback. A fallback header must not also increment `cookie.value`. Already-redacted values and empty headers produce no counts. Cookie names must never become rule IDs, and reports must not include cookie values, source excerpts, replacement previews, or cookie names as dynamic report identifiers.
+
+### Milestone 3 Combination With Authorization Findings
+
+Authorization and Cookie findings are independent and non-overlapping by construction because they match different exact header names. The sanitizer should collect Authorization findings and Cookie findings, then apply the combined finding set with the existing right-to-left replacement function. If an overlap is ever produced, treat it as the existing internal sanitization error rather than adding a generalized overlap-resolution system.
+
+Existing Authorization ordering and behavior must remain unchanged. Cookie parsing must not alter Bearer, Basic, or generic Authorization matching, marker policy, counts, or idempotence.
 
 ## Exclusive Output Creation Strategy
 

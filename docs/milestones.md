@@ -350,13 +350,255 @@ Required test coverage:
 - Existing exit-code behavior remains unchanged.
 - Console-script and module entry points remain consistent.
 
+## Milestone 3: HTTP Request Cookie Header Sanitizer
+
+Milestone 3 adds deterministic sanitization for exact line-start HTTP request `Cookie` headers while preserving all milestone 1 and milestone 2 file-processing, safety, encoding, newline, reporting, CLI, and Authorization behavior.
+
+Milestone 3 scope:
+
+- Support only exact decoded line-start HTTP request `Cookie` headers.
+- Preserve cookie names when the complete header value parses safely.
+- Replace every safely parsed cookie value with `<REDACTED:cookie.value>`.
+- Preserve original pair order and formatting around names, `=`, `;`, and trailing spaces or tabs as safely as possible.
+- Use whole-header fallback with `<REDACTED:cookie.header>` when complete safe parsing fails.
+- Keep one input file, one explicit output file, and complete-file in-memory processing.
+- Keep deterministic built-in behavior only.
+
+Milestone 3 must not include:
+
+- `Set-Cookie` sanitization.
+- Cookie-name classification.
+- Sensitive, telemetry, harmless, or unknown cookie categories.
+- Telemetry allowlists.
+- Cookie-name allowlists or denylists.
+- Selective cookie-value preservation.
+- API-key-specific headers.
+- Email or client-identifier redaction.
+- Directory processing or multiple input files.
+- Overwrite mode.
+- Atomic output replacement guarantee.
+- Metadata preservation.
+- Configuration files.
+- User-defined rules.
+- Plugin APIs or plugin registries.
+- Factories, inheritance hierarchies, dependency injection, configurable rule ordering, parser frameworks, or generalized precedence engines.
+- Debug mode.
+- Network features.
+- Telemetry.
+- LLM detection.
+- Persistence.
+- New dependencies.
+- New exit codes.
+- Full HTTP message parsing.
+- Folded-header parsing.
+
+Expected milestone 3 behavior:
+
+- Keep Cookie behavior in `src/evidence_sanitizer/sanitizer.py` using small Cookie-specific constants and private helpers.
+- Reuse `Finding`, `SanitizationReport`, `apply_findings`, existing file handling, and right-to-left replacement.
+- Add no new public data structures.
+- Authorization and Cookie findings are independent and non-overlapping by construction.
+- Match `Cookie` case-insensitively.
+- Match only exact decoded line-start `Cookie` headers.
+- Allow spaces and tabs between `Cookie` and `:`.
+- Allow spaces and tabs after `:`.
+- Preserve header-name casing, spacing around `:`, trailing spaces and tabs, LF, CRLF, mixed newline sequences, UTF-8 BOM state, and final-newline state.
+- Do not match `Set-Cookie`, `X-Cookie`, indented Cookie lines, folded continuation lines, or prose containing the word `Cookie`.
+- Exact header-like `Cookie:` lines inside message bodies may be sanitized because full HTTP body-boundary parsing remains deferred.
+
+Safe per-value parsing:
+
+- Per-value redaction is allowed only when the complete Cookie header value parses safely.
+- A safely parsed Cookie header consists of one or more non-empty `name=value` pairs separated by semicolons.
+- Cookie names must be non-empty and use only the ASCII HTTP token character set:
+
+```text
+!#$%&'*+-.^_`|~0-9A-Za-z
+```
+
+- `$` is allowed in cookie names because it is an HTTP token character.
+- Non-ASCII or malformed cookie names trigger whole-header fallback.
+- Preserve spaces or tabs around `=`, spaces or tabs around `;`, original pair order, duplicate names, and trailing horizontal whitespace at the end of the header.
+- The first `=` separates name from value.
+- Empty values, such as `session=`, are valid and must be redacted.
+- Unquoted values may contain additional `=`, commas, colons, slashes, printable punctuation other than semicolons, and non-ASCII text.
+- Quoted values are supported; preserve the surrounding quote characters and replace only the quoted payload.
+- Semicolons inside quoted values are part of the value, not pair delimiters.
+- Valid escaped characters inside quoted values are supported.
+- Missing closing quotes, dangling escapes, and non-horizontal junk after the closing quote before `;` or line end trigger whole-header fallback.
+
+Whole-header fallback:
+
+- For any non-empty, non-marker, exact non-folded Cookie header that cannot be completely and deterministically parsed, replace the complete trimmed header value with `<REDACTED:cookie.header>`.
+- Fallback triggers include missing `=`, empty name, leading semicolon, trailing semicolon, consecutive semicolons, malformed segments mixed with valid segments, malformed quoted syntax, missing closing quote, dangling escape, invalid non-ASCII cookie name, unsupported control characters, junk after a closing quote, or any other condition that prevents complete safe parsing.
+- Do not partially sanitize a malformed header.
+- A fallback header produces no `cookie.value` findings.
+
+Unchanged and deferred forms:
+
+- `Cookie:` remains unchanged and produces no finding.
+- `Cookie:` followed only by spaces or tabs remains unchanged and produces no finding.
+- `Set-Cookie` remains unchanged and out of scope.
+- `X-Cookie` remains unchanged.
+- Indented Cookie lines remain unchanged.
+- Folded Cookie headers remain unchanged. If an exact `Cookie:` line is immediately followed by a physical line beginning with a space or tab, leave the entire folded form unchanged and do not sanitize only the first physical line.
+- Full folded-header parsing is deferred.
+- Full HTTP body-boundary parsing is deferred.
+- Cookie-name classification is deferred to milestone 4.
+
+Approved milestone 3 markers:
+
+```text
+<REDACTED:cookie.value>
+<REDACTED:cookie.header>
+```
+
+Approved milestone 3 rule IDs:
+
+```text
+cookie.value
+cookie.header
+```
+
+Marker policy:
+
+- An exact approved Cookie marker used as a complete individual cookie value is already sanitized and produces no finding.
+- An exact approved Cookie marker used as the complete trimmed Cookie header value is already sanitized and produces no finding.
+- This applies even when the marker is used in an unexpected Cookie context.
+- The sanitizer must not correct or normalize wrong-context markers.
+- A marker embedded inside a larger raw value is not already sanitized and must be redacted.
+- Trailing spaces and tabs after exact markers are preserved.
+- Repeated sanitization must produce byte-identical output.
+
+Reporting semantics:
+
+- `cookie.value` counts each individual cookie value actually replaced.
+- `cookie.header` counts each Cookie header line changed through fallback.
+- A fallback header must not also increment `cookie.value`.
+- Already-redacted values produce no count.
+- Empty headers produce no count.
+- Cookie names must never become rule IDs.
+- Reports, CLI output, errors, logs, and snapshots must never include cookie values or source excerpts.
+
+Cookie-name disclosure:
+
+- Milestone 3 intentionally preserves safely parsed cookie names.
+- Preserved names may reveal framework details, authentication mechanisms, identity concepts, tenancy concepts, and application internals.
+- Examples include `ASP.NET_SessionId`, `JSESSIONID`, `username`, `email`, `customerId`, `tenant`, and `portalAuth`.
+- Preserving names is approved because it provides useful penetration-testing evidence context while values are removed.
+- Milestone 3 must not classify or selectively hide cookie names.
+- Milestone 4 will define deterministic name categories such as sensitive, telemetry, harmless, and unknown.
+
+Control-character behavior:
+
+- NUL remains rejected by the existing input-validation path.
+- CR and LF remain line delimiters, not Cookie-value characters.
+- Other unsupported control characters inside a Cookie value trigger whole-header fallback rather than a new global error.
+
+Accepted milestone 3 limitations:
+
+- Exact header-like Cookie lines inside message bodies may be sanitized.
+- Full HTTP body-boundary parsing remains deferred.
+- Folded or indented Cookie header lines remain unsupported and unchanged.
+- Folded Cookie headers may retain sensitive values.
+- `Set-Cookie` remains out of scope.
+- Cookie names may disclose application structure.
+- Cookie-name classification is deferred to milestone 4.
+- The tool does not guarantee detection of every possible secret.
+- Marker collisions are accepted and handled deterministically.
+
+### Milestone 3 Acceptance Criteria
+
+- Existing Authorization behavior remains unchanged and all existing Authorization regression tests remain valid.
+- Exact line-start `Cookie` headers are matched case-insensitively.
+- Spaces and tabs between `Cookie` and `:`, spaces and tabs after `:`, header-name casing, trailing spaces and tabs, LF, CRLF, mixed newline sequences, UTF-8 BOM state, and final-newline state are preserved.
+- `Set-Cookie`, `X-Cookie`, indented Cookie lines, folded continuation lines, and prose containing the word `Cookie` remain unchanged.
+- Exact header-like `Cookie:` lines inside bodies may be sanitized because full HTTP body-boundary parsing remains deferred.
+- Safely parsed Cookie headers preserve cookie names, pair order, duplicate names, and delimiter formatting while replacing every individual value with `<REDACTED:cookie.value>`.
+- Empty Cookie headers and whitespace-only Cookie headers remain unchanged and produce no counts.
+- Explicit empty cookie values are redacted with `<REDACTED:cookie.value>`.
+- Unquoted values containing additional `=`, commas, colons, slashes, printable punctuation other than semicolons, or non-ASCII text are redacted.
+- Quoted values, semicolons inside quoted values, and valid escaped characters inside quoted values are supported; only the quoted payload is replaced.
+- Missing `=`, empty names, leading semicolons, trailing semicolons, consecutive semicolons, malformed mixed segments, malformed quoted syntax, missing closing quotes, dangling escapes, non-ASCII cookie names, unsupported control characters, and junk after closing quotes trigger whole-header fallback.
+- Whole-header fallback replaces the complete trimmed header value with `<REDACTED:cookie.header>` and produces no `cookie.value` counts.
+- No malformed Cookie header is partially sanitized.
+- Folded Cookie forms remain completely unchanged.
+- Approved Cookie markers are idempotent as individual values and as complete trimmed header values.
+- Embedded Cookie markers inside larger raw values are redacted.
+- Rule counts use only `cookie.value` and `cookie.header` for Cookie findings.
+- `cookie.value` counts each individual cookie value actually replaced, and `cookie.header` counts each Cookie header line changed through fallback.
+- Cookie names never become rule IDs and are not included in reports as dynamic identifiers.
+- Reports, CLI output, exceptions, logs, tests, and snapshots do not include cookie values or source excerpts.
+- Cookie-name classification, sensitive/telemetry/harmless/unknown categories, telemetry allowlists, selective value preservation, and `Set-Cookie` sanitization are not implemented.
+- No new dependency, configuration file, plugin, network behavior, telemetry, LLM behavior, persistence, full HTTP parsing, folded-header parsing, directory processing, overwrite mode, or exit code is introduced.
+- Existing source immutability, output collision, dry-run, UTF-8, UTF-8 BOM, LF, CRLF, mixed-newline, final-newline, 10 MiB, NUL-byte, safe-error, and exit-code behavior remains unchanged.
+- Tests use only synthetic data.
+
+### Milestone 3 Verification Requirements
+
+Expected commands:
+
+```bash
+uv sync
+uv run evidence-sanitizer --help
+uv run python -m evidence_sanitizer --help
+uv run evidence-sanitizer sanitize --help
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src tests
+```
+
+Required unit test coverage:
+
+- Supported per-value Cookie parsing.
+- Case-insensitive Cookie header matching.
+- Header-name casing and spacing preservation.
+- Formatting preservation around `:`, `;`, and `=`.
+- Empty values.
+- Values containing additional `=`, commas, colons, and slashes.
+- Duplicate names and original order preservation.
+- Non-ASCII values.
+- Empty header and whitespace-only header unchanged.
+- Missing `=`, empty names, leading semicolons, trailing semicolons, consecutive semicolons, and malformed mixed segments trigger fallback.
+- Quoted values, escaped quoted values, and semicolons inside quoted values.
+- Malformed quoted syntax, missing closing quote, dangling escape, and junk after closing quote trigger fallback.
+- Existing Cookie value markers and header markers remain idempotent.
+- Mixed raw and already-redacted values.
+- Embedded Cookie markers are redacted.
+- `Set-Cookie` non-match.
+- `X-Cookie` non-match.
+- Indented and folded Cookie forms remain unchanged.
+- Unicode cookie-name fallback and unsupported control-character fallback.
+- Multiple Cookie headers and counts.
+- Cookie findings do not overlap with Authorization findings.
+- Performance coverage only if the chosen parser creates realistic risk.
+
+Required application and CLI test coverage:
+
+- Cookie plus Bearer plus Basic plus custom Authorization in one file.
+- Correct fixed counts for `authorization.bearer`, `authorization.basic`, `authorization.other`, `cookie.value`, and `cookie.header`.
+- No cookie values in reports, CLI output, errors, or snapshots.
+- Source remains byte-for-byte unchanged.
+- Dry-run creates no output.
+- Existing output is not overwritten.
+- BOM and newline preservation remain unchanged.
+- Mixed line endings remain unchanged.
+- No-final-newline behavior remains unchanged.
+- Full fallback behavior.
+- Idempotence.
+- Existing Authorization regression coverage remains passing.
+- Existing exit-code behavior remains unchanged.
+- Console-script and module entry points remain consistent.
+
 ## Future Milestones
 
 Future milestones are deferred and must be approved before implementation.
 
 Possible future topics:
 
-- Cookie or Set-Cookie header redaction after false-positive behavior is defined.
+- Cookie-name classification after deterministic categories are approved.
+- `Set-Cookie` header redaction after false-positive behavior is defined.
 - Additional deterministic HTTP header rules, such as selected API-key headers.
 - Email or client-identifier redaction after scope and false-positive behavior are defined.
 - Optional machine-readable safe report format.
@@ -368,7 +610,9 @@ Possible future topics:
 
 ## Functionality Explicitly Deferred
 
-- Cookie and Set-Cookie sanitization.
+- `Set-Cookie` sanitization.
+- Cookie-name classification, including sensitive, telemetry, harmless, and unknown categories.
+- Telemetry allowlists and selective cookie-value preservation.
 - API-key-specific header sanitization.
 - Email redaction.
 - Client-identifier redaction.
