@@ -31,7 +31,7 @@ TOKEN = "eyJhbGciOiJIUzI1NiJ9.synthetic-token"
 BASIC_TOKEN = "synthetic-basic-token+/="
 CUSTOM_CREDENTIAL = "appId:synthetic-signature:nonce:timestamp"
 COOKIE_SESSION_VALUE = "synthetic-cookie-session"
-COOKIE_THEME_VALUE = "synthetic-cookie-theme"
+COOKIE_HARMLESS_THEME_VALUE = "synthetic-cookie-theme"
 COOKIE_FALLBACK_VALUE = "synthetic-cookie-fallback"
 COOKIE_FALLBACK_THEME_VALUE = "synthetic-cookie-fallback-theme"
 SENSITIVE_VALUES = (
@@ -39,7 +39,6 @@ SENSITIVE_VALUES = (
     BASIC_TOKEN,
     CUSTOM_CREDENTIAL,
     COOKIE_SESSION_VALUE,
-    COOKIE_THEME_VALUE,
     COOKIE_FALLBACK_VALUE,
     COOKIE_FALLBACK_THEME_VALUE,
 )
@@ -121,7 +120,7 @@ def test_authorization_and_cookie_headers_sanitized_and_reported(
     source = (
         "GET /api/profile HTTP/1.1\n"
         "Host: example.test\n"
-        f"Cookie: session={COOKIE_SESSION_VALUE}; theme={COOKIE_THEME_VALUE}\n"
+        f"Cookie: session={COOKIE_SESSION_VALUE}; theme={COOKIE_HARMLESS_THEME_VALUE}\n"
         "Cookie: broken="
         f"{COOKIE_FALLBACK_VALUE}; malformed; theme={COOKIE_FALLBACK_THEME_VALUE}\n"
         f"Authorization: Bearer {TOKEN}\n"
@@ -133,7 +132,7 @@ def test_authorization_and_cookie_headers_sanitized_and_reported(
         "GET /api/profile HTTP/1.1\n"
         "Host: example.test\n"
         f"Cookie: session={REDACTION_MARKER_COOKIE_VALUE}; "
-        f"theme={REDACTION_MARKER_COOKIE_VALUE}\n"
+        f"theme={COOKIE_HARMLESS_THEME_VALUE}\n"
         f"Cookie: {REDACTION_MARKER_COOKIE_HEADER}\n"
         f"Authorization: Bearer {REDACTION_MARKER}\n"
         f"Authorization: Basic {REDACTION_MARKER_AUTHORIZATION_BASIC}\n"
@@ -147,7 +146,7 @@ def test_authorization_and_cookie_headers_sanitized_and_reported(
 
     assert result.output_written
     assert result.report.counts_by_rule == {
-        RULE_ID_COOKIE_VALUE: 2,
+        RULE_ID_COOKIE_VALUE: 1,
         RULE_ID_COOKIE_HEADER: 1,
         RULE_ID_AUTHORIZATION_BEARER: 1,
         RULE_ID_AUTHORIZATION_BASIC: 1,
@@ -369,7 +368,7 @@ def test_file_level_idempotence(tmp_path: Path) -> None:
     first_output_path = tmp_path / "evidence.sanitized.txt"
     second_output_path = tmp_path / "evidence.sanitized-again.txt"
     source = (
-        f"Cookie: session={COOKIE_SESSION_VALUE}; theme={COOKIE_THEME_VALUE}\n"
+        f"Cookie: session={COOKIE_SESSION_VALUE}; theme={COOKIE_HARMLESS_THEME_VALUE}\n"
         f"Authorization: Bearer {TOKEN}\n"
     ).encode()
     input_path.write_bytes(source)
@@ -379,7 +378,7 @@ def test_file_level_idempotence(tmp_path: Path) -> None:
     second_result = sanitize_file(first_output_path, second_output_path, dry_run=False)
 
     assert first_result.report.counts_by_rule == {
-        RULE_ID_COOKIE_VALUE: 2,
+        RULE_ID_COOKIE_VALUE: 1,
         RULE_ID_AUTHORIZATION_BEARER: 1,
     }
     assert second_result.report.counts_by_rule == {}

@@ -20,6 +20,7 @@ REDACTION_MARKER_AUTHORIZATION_BASIC = "<REDACTED:authorization.basic>"
 REDACTION_MARKER_AUTHORIZATION_CREDENTIALS = "<REDACTED:authorization.credentials>"
 REDACTION_MARKER_COOKIE_VALUE = "<REDACTED:cookie.value>"
 REDACTION_MARKER_COOKIE_HEADER = "<REDACTED:cookie.header>"
+COOKIE_REDACTION_MARKER_PREFIX = "<REDACTED:cookie."
 REDACTION_MARKER = REDACTION_MARKER_AUTHORIZATION_BEARER
 APPROVED_REDACTION_MARKERS = frozenset(
     (
@@ -38,6 +39,76 @@ COOKIE_HEADER_NAME = "Cookie"
 HTTP_TOKEN_CHARACTERS = frozenset(
     "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 )
+ASCII_ALPHANUMERIC_CHARACTERS = frozenset("0123456789abcdefghijklmnopqrstuvwxyz")
+COOKIE_CATEGORY_SENSITIVE = "sensitive"
+COOKIE_CATEGORY_TELEMETRY = "telemetry"
+COOKIE_CATEGORY_HARMLESS = "harmless"
+COOKIE_CATEGORY_UNKNOWN = "unknown"
+SENSITIVE_COOKIE_NAMES = frozenset(
+    (
+        "session",
+        "sessionid",
+        "session_id",
+        "sid",
+        "auth",
+        "auth_token",
+        "access_token",
+        "refresh_token",
+        "token",
+        "jwt",
+        "sso",
+        "sso_state",
+        "username",
+        "user",
+        "userid",
+        "user_id",
+        "email",
+        "identity",
+        "account",
+        "account_id",
+        "customer",
+        "customer_id",
+        "tenant",
+        "tenant_id",
+        "portalauth",
+        "asp.net_sessionid",
+        "jsessionid",
+        "phpsessid",
+        "connect.sid",
+        "laravel_session",
+    )
+)
+TELEMETRY_COOKIE_NAMES = frozenset(
+    (
+        "_ga",
+        "_gid",
+        "_gat",
+        "_fbp",
+        "_fbc",
+        "_hjid",
+        "_clck",
+        "_clsk",
+        "ajs_anonymous_id",
+        "ajs_user_id",
+        "_mkto_trk",
+        "hubspotutk",
+        "__hstc",
+        "__hssc",
+        "__hssrc",
+    )
+)
+TELEMETRY_COOKIE_PREFIXES = (
+    "_ga_",
+    "_gat_",
+    "_hjsession_",
+    "_hjsessionuser_",
+    "amplitude_",
+    "amp_",
+    "mp_",
+)
+HARMLESS_COOKIE_NAMES = frozenset(("theme", "color_scheme", "display_mode"))
+SENSITIVE_ASPSESSIONID_PREFIX = "aspsessionid"
+SENSITIVE_REMEMBER_WEB_PREFIX = "remember_web_"
 
 EXIT_INTERNAL_ERROR = 1
 EXIT_UNSAFE_PATH = 3
@@ -95,6 +166,15 @@ class SanitizationResult:
 
     report: SanitizationReport
     output_written: bool
+
+
+@dataclass(frozen=True)
+class _ParsedCookieValue:
+    """Transient parsed Cookie name and value span for classification."""
+
+    name: str
+    value_start: int
+    value_end: int
 
 
 def find_authorization_credentials(text: str) -> tuple[Finding, ...]:
@@ -162,8 +242,8 @@ def find_cookie_values(text: str) -> tuple[Finding, ...]:
         if trimmed_value in APPROVED_COOKIE_REDACTION_MARKERS:
             continue
 
-        value_spans = _parse_cookie_value_spans(trimmed_value)
-        if value_spans is None:
+        parsed_values = _parse_cookie_values(trimmed_value)
+        if parsed_values is None:
             findings.append(
                 Finding(
                     rule_id=RULE_ID_COOKIE_HEADER,
@@ -174,15 +254,23 @@ def find_cookie_values(text: str) -> tuple[Finding, ...]:
             )
             continue
 
-        for value_relative_start, value_relative_end in value_spans:
-            value = trimmed_value[value_relative_start:value_relative_end]
+        for parsed_value in parsed_values:
+            value = trimmed_value[parsed_value.value_start : parsed_value.value_end]
             if value in APPROVED_COOKIE_REDACTION_MARKERS:
+                continue
+            if _contains_cookie_redaction_marker_like(value):
+                should_redact = True
+            else:
+                should_redact = (
+                    _classify_cookie_name(parsed_value.name) != COOKIE_CATEGORY_HARMLESS
+                )
+            if not should_redact:
                 continue
             findings.append(
                 Finding(
                     rule_id=RULE_ID_COOKIE_VALUE,
-                    start=value_start + value_relative_start,
-                    end=value_start + value_relative_end,
+                    start=value_start + parsed_value.value_start,
+                    end=value_start + parsed_value.value_end,
                     replacement=REDACTION_MARKER_COOKIE_VALUE,
                 )
             )
@@ -234,16 +322,17 @@ def _cookie_header_value_start(line: str) -> int | None:
     return position
 
 
-def _parse_cookie_value_spans(value: str) -> tuple[tuple[int, int], ...] | None:
-    """Parse a complete Cookie value and return replaceable value spans."""
-    spans: list[tuple[int, int]] = []
+def _parse_cookie_values(value: str) -> tuple[_ParsedCookieValue, ...] | None:
+    """Parse a complete Cookie value for later name-only classification."""
+    parsed_values: list[_ParsedCookieValue] = []
     position = 0
 
     while position < len(value):
         name_start = position
         while position < len(value) and value[position] not in " \t=;":
             position += 1
-        if not _is_cookie_name(value[name_start:position]):
+        name = value[name_start:position]
+        if not _is_cookie_name(name):
             return None
 
         while position < len(value) and value[position] in " \t":
@@ -263,7 +352,13 @@ def _parse_cookie_value_spans(value: str) -> tuple[tuple[int, int], ...] | None:
             return None
 
         value_start, value_end, position = parsed
-        spans.append((value_start, value_end))
+        parsed_values.append(
+            _ParsedCookieValue(
+                name=name,
+                value_start=value_start,
+                value_end=value_end,
+            )
+        )
 
         if position == len(value):
             break
@@ -276,7 +371,55 @@ def _parse_cookie_value_spans(value: str) -> tuple[tuple[int, int], ...] | None:
         if position >= len(value):
             return None
 
-    return tuple(spans) if spans else None
+    return tuple(parsed_values) if parsed_values else None
+
+
+def _classify_cookie_name(name: str) -> str:
+    """Classify an already validated Cookie name using approved name rules."""
+    normalized = name.lower()
+
+    if normalized in SENSITIVE_COOKIE_NAMES:
+        return COOKIE_CATEGORY_SENSITIVE
+    if _is_sensitive_cookie_family(normalized):
+        return COOKIE_CATEGORY_SENSITIVE
+    if normalized in TELEMETRY_COOKIE_NAMES:
+        return COOKIE_CATEGORY_TELEMETRY
+    if any(
+        normalized.startswith(prefix) and len(normalized) > len(prefix)
+        for prefix in TELEMETRY_COOKIE_PREFIXES
+    ):
+        return COOKIE_CATEGORY_TELEMETRY
+    if normalized in HARMLESS_COOKIE_NAMES:
+        return COOKIE_CATEGORY_HARMLESS
+    return COOKIE_CATEGORY_UNKNOWN
+
+
+def _contains_cookie_redaction_marker_like(value: str) -> bool:
+    """Return whether a raw Cookie value contains a Cookie marker form."""
+    if any(marker in value for marker in APPROVED_COOKIE_REDACTION_MARKERS):
+        return True
+
+    position = value.find(COOKIE_REDACTION_MARKER_PREFIX)
+    while position != -1:
+        marker_end = value.find(">", position + len(COOKIE_REDACTION_MARKER_PREFIX))
+        if marker_end != -1:
+            return True
+        position = value.find(COOKIE_REDACTION_MARKER_PREFIX, position + 1)
+
+    return False
+
+
+def _is_sensitive_cookie_family(normalized_name: str) -> bool:
+    """Return whether a lower-case Cookie name matches a sensitive family."""
+    if normalized_name.startswith(SENSITIVE_ASPSESSIONID_PREFIX):
+        suffix = normalized_name[len(SENSITIVE_ASPSESSIONID_PREFIX) :]
+        return all(character in ASCII_ALPHANUMERIC_CHARACTERS for character in suffix)
+    if normalized_name.startswith(SENSITIVE_REMEMBER_WEB_PREFIX):
+        suffix = normalized_name[len(SENSITIVE_REMEMBER_WEB_PREFIX) :]
+        return bool(suffix) and all(
+            character in HTTP_TOKEN_CHARACTERS for character in suffix
+        )
+    return False
 
 
 def _parse_quoted_cookie_value(

@@ -24,16 +24,16 @@ SYNTHETIC_CREDENTIAL = "eyJhbGciOiJIUzI1NiJ9.synthetic-token"
 SYNTHETIC_BASIC_CREDENTIAL = "synthetic-basic-token+/="
 SYNTHETIC_CUSTOM_CREDENTIAL = "appId:synthetic-signature:nonce:timestamp"
 SYNTHETIC_COOKIE_VALUE = "synthetic-cookie-value"
-SYNTHETIC_SECOND_COOKIE_VALUE = "synthetic-second-cookie-value"
+SYNTHETIC_HARMLESS_COOKIE_VALUE = "synthetic-second-cookie-value"
 SYNTHETIC_FALLBACK_COOKIE_VALUE = "synthetic-fallback-cookie-value"
-SENSITIVE_VALUES = (
+OUTPUT_FORBIDDEN_VALUES = (
     SYNTHETIC_CREDENTIAL,
     SYNTHETIC_BASIC_CREDENTIAL,
     SYNTHETIC_CUSTOM_CREDENTIAL,
     SYNTHETIC_COOKIE_VALUE,
-    SYNTHETIC_SECOND_COOKIE_VALUE,
     SYNTHETIC_FALLBACK_COOKIE_VALUE,
 )
+CLI_FORBIDDEN_VALUES = OUTPUT_FORBIDDEN_VALUES + (SYNTHETIC_HARMLESS_COOKIE_VALUE,)
 
 
 def run_entrypoint(
@@ -74,7 +74,7 @@ def assert_rejected(
 
 def assert_no_cli_leak(result: subprocess.CompletedProcess[str]) -> None:
     output = combined_output(result)
-    if any(value in output for value in SENSITIVE_VALUES):
+    if any(value in output for value in CLI_FORBIDDEN_VALUES):
         pytest.fail("CLI output leaked synthetic credential")
 
 
@@ -85,7 +85,7 @@ def assert_file_unchanged(path: Path, expected: bytes) -> None:
 
 def assert_output_bytes(path: Path, expected: bytes) -> None:
     actual = path.read_bytes()
-    if any(value.encode() in actual for value in SENSITIVE_VALUES):
+    if any(value.encode() in actual for value in OUTPUT_FORBIDDEN_VALUES):
         pytest.fail("sanitized output leaked synthetic credential")
     assert actual == expected
 
@@ -132,7 +132,7 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
             "GET /api/profile HTTP/1.1\n"
             "Host: example.test\n"
             f"Cookie: session={SYNTHETIC_COOKIE_VALUE}; "
-            f"theme={SYNTHETIC_SECOND_COOKIE_VALUE}\n"
+            f"theme={SYNTHETIC_HARMLESS_COOKIE_VALUE}\n"
             f"Cookie: bad={SYNTHETIC_FALLBACK_COOKIE_VALUE}; malformed\n"
             f"Authorization: Bearer {SYNTHETIC_CREDENTIAL}\n"
             f"Authorization: Basic {SYNTHETIC_BASIC_CREDENTIAL}\n"
@@ -143,7 +143,7 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
             "GET /api/profile HTTP/1.1\n"
             "Host: example.test\n"
             f"Cookie: session={REDACTION_MARKER_COOKIE_VALUE}; "
-            f"theme={REDACTION_MARKER_COOKIE_VALUE}\n"
+            f"theme={SYNTHETIC_HARMLESS_COOKIE_VALUE}\n"
             f"Cookie: {REDACTION_MARKER_COOKIE_HEADER}\n"
             f"Authorization: Bearer {REDACTION_MARKER}\n"
             f"Authorization: Basic {REDACTION_MARKER_AUTHORIZATION_BASIC}\n"
@@ -165,7 +165,7 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
         assert "authorization.bearer: 1" in output
         assert "authorization.other: 1" in output
         assert "cookie.header: 1" in output
-        assert "cookie.value: 2" in output
+        assert "cookie.value: 1" in output
         assert "Authorization:" not in output
         assert "Cookie:" not in output
         assert_output_bytes(output_path, expected)
