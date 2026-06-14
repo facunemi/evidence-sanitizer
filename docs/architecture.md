@@ -23,11 +23,13 @@ Milestone 1 may introduce additional modules only as responsibilities become rea
 - Deterministic sanitization for the bearer authorization rule.
 - Safe reporting of counts by rule identifier.
 
-Do not create modules such as `paths.py`, `reporting.py`, `textio.py`, `engine.py`, or `rules/` merely because they might be useful later. Their creation should be justified by concrete milestone 1 implementation responsibilities.
+Milestone 2 generalizes the existing Authorization-header rule but should continue to use the same small module boundary. The added responsibility is still one coherent Authorization-header sanitizer, so it does not justify a `rules/` package, plugin registry, factories, dependency injection, inheritance hierarchy, generalized precedence engine, or generalized configuration.
+
+Do not create modules such as `paths.py`, `reporting.py`, `textio.py`, `engine.py`, or `rules/` merely because they might be useful later. Their creation should be justified by concrete implemented responsibilities.
 
 ## Data Flow
 
-Milestone 1 data flow:
+Milestone 1 and milestone 2 data flow:
 
 1. Typer parses `sanitize INPUT --output OUTPUT [--dry-run]`.
 2. The command validates the input path, output path, and output parent directory.
@@ -36,7 +38,7 @@ Milestone 1 data flow:
 5. The command reads the complete input file in memory, up to 10 MiB.
 6. The command rejects NUL bytes.
 7. The command decodes strict UTF-8 or UTF-8 with BOM.
-8. The sanitizer applies the single `authorization.bearer` rule.
+8. The sanitizer applies the approved Authorization-header rule set for the active milestone.
 9. The sanitizer returns sanitized text plus a safe report.
 10. Dry-run mode prints the safe report and writes nothing.
 11. Normal mode creates the output path exclusively and writes the sanitized bytes.
@@ -78,7 +80,7 @@ These are public design concepts, not a requirement to create separate modules o
 
 Findings should store:
 
-- `rule_id`: stable identifier, such as `authorization.bearer`.
+- `rule_id`: stable identifier, such as `authorization.bearer`, `authorization.basic`, or `authorization.other`.
 - `start`: start offset in decoded text.
 - `end`: end offset in decoded text.
 - `replacement`: deterministic replacement text.
@@ -119,6 +121,8 @@ Milestone 1 boundaries should be introduced only when the code becomes difficult
 
 Avoid broad names that imply future frameworks. Prefer small concrete names tied to implemented behavior.
 
+Milestone 2 should keep Authorization-header parsing and replacement in `sanitizer.py`. A new `authorization.py` module or `rules/` package is not justified unless implementation responsibilities grow beyond one coherent Authorization-header finder.
+
 ## Encoding And Newline Behavior
 
 - Read bytes first.
@@ -131,9 +135,9 @@ Avoid broad names that imply future frameworks. Prefer small concrete names tied
 - Do not use text mode newline conversion for reading or writing.
 - Preserve LF, CRLF, mixed newline sequences, and final-newline state by operating on decoded text without newline normalization.
 
-## Bearer Authorization Rule
+## Authorization Header Rules
 
-Milestone 1 supports only HTTP-style authorization header lines:
+Milestone 1 supports only HTTP-style Bearer authorization header lines:
 
 ```text
 Authorization: Bearer secret-token
@@ -148,7 +152,89 @@ The rule should:
 - Avoid matching arbitrary prose that contains the word `Bearer`.
 - Be idempotent when run repeatedly.
 
-The rule must produce non-overlapping findings. If overlapping findings occur in milestone 1, treat that as an internal sanitization error rather than designing a generalized overlap system prematurely.
+Milestone 2 generalizes this into one coherent Authorization-header finder. The finder should produce at most one finding per Authorization line and should avoid overlapping findings by construction. If overlapping findings occur, treat that as an internal sanitization error rather than introducing a generalized overlap-resolution system.
+
+### Milestone 2 Auth-Scheme Grammar
+
+Milestone 2 should match only syntactically valid auth schemes using the ASCII HTTP token character set:
+
+```text
+!#$%&'*+-.^_`|~0-9A-Za-z
+```
+
+Unicode scheme names and malformed scheme names are unsupported and remain unchanged. The Authorization header name is still matched case-insensitively, and only lines that begin exactly with the header name are in scope. Folded or indented header lines remain unsupported.
+
+### Milestone 2 Finder Structure
+
+Use one line-oriented finder in `sanitizer.py` that parses the header name, spacing around `:`, scheme, spacing after the scheme, credential section, trailing spaces or tabs, and line ending. It should then branch by scheme:
+
+- Bearer branch for `Bearer`, case-insensitive.
+- Basic branch for `Basic`, case-insensitive.
+- Generic fallback branch for all other syntactically valid schemes.
+
+Bearer and Basic branches must run before the generic branch and must not fall through to the generic branch when their specialized validation fails. Generic fallback applies only to schemes other than Bearer and Basic.
+
+### Milestone 2 Bearer Branch
+
+The Bearer branch preserves all milestone 1 behavior:
+
+- Preserve header name casing.
+- Preserve spacing around `:`.
+- Preserve scheme casing.
+- Preserve spacing between scheme and credentials.
+- Preserve trailing spaces and tabs.
+- Require exactly one contiguous non-whitespace credential.
+- Replace only the credential with `<REDACTED:authorization.bearer>`.
+- Use rule ID `authorization.bearer`.
+- Leave empty, whitespace-only, or internally spaced Bearer credentials unchanged.
+
+### Milestone 2 Basic Branch
+
+The Basic branch should:
+
+- Match `Basic` case-insensitively.
+- Preserve header name casing, scheme casing, and surrounding spacing.
+- Preserve trailing spaces and tabs.
+- Require exactly one contiguous non-whitespace credential.
+- Not Base64-decode or validate the credential.
+- Replace only the credential with `<REDACTED:authorization.basic>`.
+- Use rule ID `authorization.basic`.
+- Leave empty, whitespace-only, or internally spaced Basic credentials unchanged.
+
+### Milestone 2 Generic Fallback Branch
+
+The generic branch should:
+
+- Apply only to syntactically valid schemes other than Bearer and Basic.
+- Preserve header name, spacing around `:`, scheme casing, and spacing between scheme and credentials.
+- Replace the complete non-empty credential section after the scheme with `<REDACTED:authorization.credentials>`.
+- Use rule ID `authorization.other`.
+- Allow internal spaces, commas, quotes, equals signs, colons, slashes, and other punctuation.
+- Not parse individual Digest, AWS, AMX, OAuth, Signature, or custom parameters.
+- Leave empty or scheme-only headers unchanged.
+- Never include the custom scheme name in the report rule ID.
+
+### Milestone 2 Idempotence And Marker Policy
+
+Approved markers are:
+
+```text
+<REDACTED:authorization.bearer>
+<REDACTED:authorization.basic>
+<REDACTED:authorization.credentials>
+```
+
+If the complete credential section is exactly equal to any approved marker, the value is already sanitized and the finder should produce no finding. This applies even when the marker appears under a different scheme. The sanitizer must not correct or normalize a marker used under another scheme. A marker embedded inside a larger raw credential value is not already sanitized.
+
+### Milestone 2 Reporting Aggregation
+
+Reports should aggregate counts from findings by fixed rule ID only:
+
+- `authorization.bearer`
+- `authorization.basic`
+- `authorization.other`
+
+Counts represent one redacted Authorization credential section per matching header line. Reports must not include credential values, source excerpts, replacement previews, or custom scheme names.
 
 ## Exclusive Output Creation Strategy
 

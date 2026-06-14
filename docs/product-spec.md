@@ -39,10 +39,12 @@ The MVP supports:
 
 Milestone 1 is smaller than the full MVP rule set. It implements only one rule: HTTP-style `Authorization: Bearer` header redaction.
 
+Milestone 2 generalizes HTTP `Authorization` header sanitization. It preserves the Milestone 1 Bearer behavior, adds explicit Basic authentication sanitization, and adds a conservative fallback for syntactically valid unknown, custom, and structured authorization schemes.
+
 ## Non-Goals
 
 - In-place modification of evidence.
-- Directory processing in milestone 1.
+- Directory processing in current milestones.
 - Binary file sanitization.
 - Guaranteed detection of every secret.
 - Heuristic binary classification beyond NUL-byte rejection and strict UTF-8 decoding failure.
@@ -50,6 +52,9 @@ Milestone 1 is smaller than the full MVP rule set. It implements only one rule: 
 - Network features, telemetry, update checks, sync, or remote scanning.
 - LLM-based detection or replacement.
 - User-defined rules, configuration files, or plugins in the first version.
+- Cookie or Set-Cookie sanitization in milestone 2.
+- API-key-specific headers, email redaction, or client-identifier redaction in milestone 2.
+- Full HTTP header/body parsing or folded-header parsing in milestone 2.
 - Database storage.
 - Web application features.
 - Debug mode.
@@ -59,6 +64,7 @@ Milestone 1 is smaller than the full MVP rule set. It implements only one rule: 
 
 - As a tester, I can sanitize `request.txt` into `request.sanitized.txt` while leaving `request.txt` unchanged.
 - As a tester, I can run dry-run mode and see that `authorization.bearer` matched once without seeing the token.
+- As a tester, I can sanitize Basic and custom Authorization credentials without exposing them in output.
 - As a reviewer, I can understand which rule transformed data and how many replacements occurred.
 - As a cautious user, I receive an error if the output path already exists.
 - As a cautious user, I receive an error if the output path resolves to the same file as the input.
@@ -88,6 +94,103 @@ These are MVP functional requirements. Milestone 0 is governed by `docs/mileston
 - Detected findings are successful execution and must return exit code `0`.
 - Typer handles CLI usage errors.
 
+## Milestone 2 Authorization Sanitization
+
+Milestone 2 supports HTTP-style `Authorization` header lines that begin exactly at the start of a decoded line. Indented or folded header lines remain unsupported and unchanged. Exact header-like `Authorization` lines inside message bodies may still be sanitized because full HTTP body-boundary parsing is deferred.
+
+Supported examples:
+
+```http
+Authorization: Bearer eyJhbGciOi...
+Authorization: Bearer <REDACTED:authorization.bearer>
+```
+
+```http
+Authorization: Basic dXNlcjpwYXNz
+Authorization: Basic <REDACTED:authorization.basic>
+```
+
+```http
+Authorization: AMX appId:signature:nonce:timestamp
+Authorization: AMX <REDACTED:authorization.credentials>
+```
+
+```http
+Authorization: Digest username="user", realm="api", nonce="abc", response="def"
+Authorization: Digest <REDACTED:authorization.credentials>
+```
+
+```http
+Authorization: CustomScheme opaque value with parameters
+Authorization: CustomScheme <REDACTED:authorization.credentials>
+```
+
+Milestone 2 uses these rule IDs and markers:
+
+| Rule ID | Marker | Applies to |
+| --- | --- | --- |
+| `authorization.bearer` | `<REDACTED:authorization.bearer>` | `Bearer` scheme credentials |
+| `authorization.basic` | `<REDACTED:authorization.basic>` | `Basic` scheme credentials |
+| `authorization.other` | `<REDACTED:authorization.credentials>` | Other syntactically valid schemes |
+
+The auth scheme must use the ASCII HTTP token character set:
+
+```text
+!#$%&'*+-.^_`|~0-9A-Za-z
+```
+
+Unicode scheme names and malformed schemes are unsupported and remain unchanged.
+
+Bearer requirements:
+
+- Match the header name case-insensitively.
+- Match the `Bearer` scheme case-insensitively.
+- Preserve header name casing, spacing around `:`, scheme casing, spacing between scheme and credentials, and trailing spaces or tabs.
+- Require exactly one contiguous non-whitespace credential value.
+- Replace only the credential with `<REDACTED:authorization.bearer>`.
+- Leave empty, whitespace-only, or internally spaced Bearer credentials unchanged.
+- Never fall through to the generic rule when Bearer-specific validation fails.
+
+Basic requirements:
+
+- Match the `Basic` scheme case-insensitively.
+- Preserve header name casing, spacing around `:`, scheme casing, spacing between scheme and credentials, and trailing spaces or tabs.
+- Require exactly one contiguous non-whitespace credential value.
+- Do not Base64-decode or validate the credential.
+- Replace only the credential with `<REDACTED:authorization.basic>`.
+- Leave empty, whitespace-only, or internally spaced Basic credentials unchanged.
+- Never fall through to the generic rule when Basic-specific validation fails.
+
+Generic fallback requirements:
+
+- Apply only to syntactically valid schemes other than Bearer and Basic.
+- Preserve header name, spacing around `:`, scheme casing, and spacing between scheme and credentials.
+- Replace the complete non-empty credential section after the scheme with `<REDACTED:authorization.credentials>`.
+- Allow internal spaces, commas, quotes, equals signs, colons, slashes, and other punctuation in the credential section.
+- Do not parse individual Digest, AWS, AMX, OAuth, Signature, or custom parameters.
+- Leave empty or scheme-only headers unchanged.
+- Never include custom scheme names in report rule IDs.
+
+Unsupported forms remain unchanged:
+
+- `Authorization:`
+- `Authorization:` followed only by spaces or tabs
+- `Authorization: Bearer`
+- `Authorization: Bearer` followed only by spaces or tabs
+- `Authorization: Basic`
+- `Authorization: Basic` followed only by spaces or tabs
+- `Authorization Bearer abc123`
+- `X-Authorization: Bearer abc123`
+- ` Authorization: Bearer abc123`
+
+Already-redacted marker policy:
+
+- The approved markers are `<REDACTED:authorization.bearer>`, `<REDACTED:authorization.basic>`, and `<REDACTED:authorization.credentials>`.
+- If the complete credential section is exactly one approved marker, the value is already sanitized and produces no finding or count.
+- This applies even when the marker appears under a different scheme.
+- The sanitizer must not correct or normalize a marker used under another scheme.
+- A marker embedded inside a larger raw credential value is not considered already sanitized.
+
 ## CLI Behavior
 
 Recommended command shape:
@@ -111,6 +214,16 @@ Dry run:
 Dry run: no output written
 Rules triggered:
 authorization.bearer: 1
+```
+
+Milestone 2 example with multiple Authorization scheme types:
+
+```text
+Sanitized: evidence.txt -> evidence.sanitized.txt
+Rules triggered:
+authorization.basic: 1
+authorization.bearer: 1
+authorization.other: 1
 ```
 
 No findings:
@@ -158,6 +271,14 @@ Normal CLI output may show the user-provided paths exactly as supplied. It must 
 - The tool does not guarantee that every secret is removed.
 - The tool only detects supported patterns.
 - Milestone 1 detects only HTTP-style `Authorization: Bearer` header values.
+- Milestone 2 detects HTTP-style `Authorization` header credentials for Bearer, Basic, and syntactically valid other schemes only.
+- Milestone 2 does not parse Cookie, Set-Cookie, API-key-specific headers, email addresses, or client identifiers.
+- Full HTTP header/body boundary parsing is deferred; exact header-like `Authorization` lines inside bodies may be sanitized.
+- Folded or indented Authorization header lines remain unsupported.
+- Unicode auth-scheme names and malformed schemes remain unsupported.
+- Basic credentials are not decoded or validated.
+- Generic structured credentials are redacted as one whole credential section.
+- Replacement marker collisions are accepted and handled deterministically.
 - Binary detection is intentionally limited and cannot reliably identify every binary file.
 - Output creation is exclusive, but atomic replacement is not guaranteed in milestone 1.
 - Abrupt process termination may leave a partial output file.
@@ -181,3 +302,18 @@ MVP acceptance criteria:
 - UTF-8 BOM presence, newline sequences, and final-newline state are preserved.
 - No network, telemetry, plugin, or LLM behavior exists.
 - Tests use only synthetic data.
+
+Milestone 2 acceptance criteria:
+
+- Existing Bearer behavior remains unchanged, including marker, rule ID, spacing preservation, token-only credential matching, and idempotence.
+- Basic Authorization credentials are sanitized with rule ID `authorization.basic` and marker `<REDACTED:authorization.basic>`.
+- Basic credentials are not decoded or validated.
+- Bearer and Basic lines with empty, whitespace-only, or internally spaced credentials remain unchanged and do not fall through to the generic rule.
+- Unknown, custom, and structured Authorization schemes using the approved ASCII token grammar are sanitized with rule ID `authorization.other` and marker `<REDACTED:authorization.credentials>`.
+- Generic structured credentials may contain internal spaces and punctuation and are redacted as one whole credential section.
+- Any complete credential section that exactly equals an approved marker is unchanged and does not increment counts, even when the marker appears under a different scheme.
+- Reports contain only `authorization.bearer`, `authorization.basic`, and `authorization.other` rule IDs and counts.
+- Reports never contain credential values, source excerpts, or custom scheme names.
+- One Authorization line produces at most one finding.
+- Cookie, Set-Cookie, API-key-specific headers, email redaction, and client-identifier redaction are not implemented.
+- Existing file safety, dry-run, UTF-8, BOM, newline, size-limit, NUL-byte, safe-error, and exit-code behavior remains unchanged.

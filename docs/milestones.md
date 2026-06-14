@@ -178,19 +178,189 @@ Required test coverage:
 - No secret leakage in CLI output or exceptions.
 - Bearer detection over a synthetic 1 MiB malformed non-matching line completes in less than 2 seconds during the normal `uv run pytest` test run.
 
+## Milestone 2: Generalized Authorization Header Sanitizer
+
+Milestone 2 generalizes HTTP `Authorization` header sanitization while preserving all milestone 1 file-processing, safety, encoding, newline, reporting, and CLI behavior.
+
+Milestone 2 scope:
+
+- Preserve existing HTTP-style `Authorization: Bearer` behavior unchanged.
+- Add explicit HTTP-style `Authorization: Basic` credential sanitization.
+- Add a conservative generic fallback for syntactically valid unknown, custom, and structured Authorization schemes.
+- Keep one input file, one explicit output file, and complete-file in-memory processing.
+- Keep deterministic built-in behavior only.
+
+Milestone 2 must not include:
+
+- Cookie or Set-Cookie sanitization.
+- API-key-specific headers.
+- Email or client-identifier redaction.
+- Directory processing or multiple input files.
+- Overwrite mode.
+- Atomic output replacement guarantee.
+- Metadata preservation.
+- Configuration files.
+- Plugin APIs or plugin registries.
+- Factories, inheritance hierarchies, dependency injection, or generalized precedence engines.
+- Debug mode.
+- Network features.
+- Telemetry.
+- LLM detection.
+- Persistence.
+- Full HTTP header/body parsing.
+- Folded-header parsing.
+
+Expected milestone 2 behavior:
+
+- Use one coherent Authorization-header finder in `src/evidence_sanitizer/sanitizer.py`.
+- The finder produces at most one finding per Authorization line.
+- Match only exact line-start `Authorization` headers; indented or folded lines remain unchanged.
+- Match the header name case-insensitively.
+- Allow spaces and tabs around `:`.
+- Require an auth scheme using the ASCII HTTP token character set:
+
+```text
+!#$%&'*+-.^_`|~0-9A-Za-z
+```
+
+- Leave Unicode scheme names and malformed schemes unchanged.
+- Preserve header name casing, spacing around `:`, scheme casing, spacing between scheme and credentials, trailing spaces and tabs, newline sequences, and final-newline state.
+- Keep Bearer rule ID `authorization.bearer` and marker `<REDACTED:authorization.bearer>`.
+- Bearer credentials must be exactly one contiguous non-whitespace value.
+- Empty, whitespace-only, or internally spaced Bearer credentials remain unchanged.
+- Bearer lines that fail specialized validation must not fall through to the generic rule.
+- Use Basic rule ID `authorization.basic` and marker `<REDACTED:authorization.basic>`.
+- Basic credentials must be exactly one contiguous non-whitespace value.
+- Basic credentials must not be Base64-decoded or validated.
+- Empty, whitespace-only, or internally spaced Basic credentials remain unchanged.
+- Basic lines that fail specialized validation must not fall through to the generic rule.
+- Use generic rule ID `authorization.other` and marker `<REDACTED:authorization.credentials>` for schemes other than Bearer and Basic.
+- Generic fallback replaces the complete non-empty credential section after the scheme.
+- Generic fallback allows internal spaces, commas, quotes, equals signs, colons, slashes, and other punctuation.
+- Generic fallback must not parse individual Digest, AWS, AMX, OAuth, Signature, or custom parameters.
+- Empty or scheme-only generic headers remain unchanged.
+- Custom scheme names must never appear in report rule IDs.
+- Counts represent one redacted Authorization credential section per matching header line.
+- Already-redacted values do not increment counts.
+- Reports contain only fixed rule IDs and counts, never credential values, source excerpts, or custom scheme names.
+
+Approved milestone 2 markers:
+
+```text
+<REDACTED:authorization.bearer>
+<REDACTED:authorization.basic>
+<REDACTED:authorization.credentials>
+```
+
+Marker policy:
+
+- If the complete credential section is exactly any approved marker, the value is already sanitized and produces no finding.
+- This applies even when the marker appears under a different scheme.
+- The sanitizer must not correct or normalize a marker used under another scheme.
+- A marker embedded inside a larger raw credential value is not considered already sanitized.
+
+Accepted milestone 2 limitations:
+
+- Exact header-like Authorization lines inside message bodies may be sanitized.
+- Full HTTP body-boundary parsing remains deferred.
+- Folded or indented header lines remain unsupported.
+- Unicode auth-scheme names remain unsupported.
+- Basic credentials are not decoded or validated.
+- Generic structured credentials are redacted as a whole.
+- The tool does not guarantee detection of every possible secret.
+- Marker collisions are accepted and handled deterministically.
+
+### Milestone 2 Acceptance Criteria
+
+- Existing Bearer behavior remains unchanged and all existing Bearer regression tests remain valid, except milestone 1 tests that expected Basic to be unsupported must be updated for the approved Basic behavior.
+- Bearer credentials are sanitized only when they are one contiguous non-whitespace value.
+- Bearer lines with empty, whitespace-only, or internally spaced credentials remain unchanged and do not fall through to generic fallback.
+- Basic credentials are sanitized only when they are one contiguous non-whitespace value.
+- Basic credentials are not decoded or validated.
+- Basic lines with empty, whitespace-only, or internally spaced credentials remain unchanged and do not fall through to generic fallback.
+- Unknown, custom, and structured schemes using the approved ASCII token grammar are sanitized by generic fallback.
+- Generic fallback preserves scheme name and formatting while replacing the full non-empty credential section.
+- Generic fallback supports structured values containing internal spaces and punctuation.
+- Malformed schemes, Unicode scheme names, folded lines, indented lines, and unrelated prose remain unchanged.
+- Any exact approved marker is treated as already sanitized, even under a different scheme.
+- Repeated sanitization is idempotent.
+- One Authorization line creates at most one finding.
+- Rule counts use only `authorization.bearer`, `authorization.basic`, and `authorization.other`.
+- Reports, CLI output, exceptions, logs, tests, and snapshots do not include detected values or source excerpts.
+- Reports do not include custom scheme names.
+- Source files remain byte-for-byte unchanged.
+- Existing output paths are not overwritten.
+- Dry-run creates no output file and no temporary file.
+- Existing UTF-8, UTF-8 BOM, LF, CRLF, mixed-newline, final-newline, 10 MiB, NUL-byte, safe-error, and exit-code behavior remains unchanged.
+- Cookie, Set-Cookie, API-key-specific headers, email redaction, client-identifier redaction, directory processing, configuration files, plugins, network behavior, telemetry, LLM behavior, persistence, full HTTP parsing, and folded-header parsing are not implemented.
+- Tests use only synthetic data.
+
+### Milestone 2 Verification Requirements
+
+Expected commands:
+
+```bash
+uv sync
+uv run evidence-sanitizer --help
+uv run python -m evidence_sanitizer --help
+uv run evidence-sanitizer sanitize --help
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src tests
+```
+
+Required test coverage:
+
+- Existing Bearer regression coverage remains passing.
+- Bearer already-redacted marker remains idempotent.
+- Generic fallback does not capture Bearer lines.
+- Basic standard header redaction.
+- Basic case-insensitive scheme matching.
+- Basic preserved spacing and casing.
+- Basic tabs around separators.
+- Basic punctuation in one-token credentials.
+- Basic empty, whitespace-only, and internally spaced credentials remain unchanged.
+- Basic already-redacted marker remains unchanged.
+- Multiple Basic headers are counted correctly.
+- Basic idempotence.
+- AMX-like generic credential redaction.
+- Digest-like structured credential redaction.
+- AWS-style structured credential redaction.
+- Custom one-token credential redaction.
+- Custom credential redaction with internal spaces.
+- Generic credentials containing quotes, commas, equals signs, colons, and slashes.
+- Generic scheme and surrounding syntax preservation.
+- Generic empty or scheme-only headers remain unchanged.
+- Malformed schemes remain unchanged.
+- Indented lines remain unchanged.
+- Unrelated prose remains unchanged.
+- Generic already-redacted marker remains unchanged.
+- Wrong-scheme markers remain unchanged.
+- Generic idempotence.
+- No overlap between Bearer, Basic, and generic fallback.
+- Source remains byte-for-byte unchanged.
+- Dry-run creates no output.
+- Existing output is not overwritten.
+- BOM and newline preservation remain unchanged.
+- Mixed line endings remain unchanged.
+- Reports contain correct counts for Bearer, Basic, and other scheme types in one file.
+- Safe output contains only rule IDs and counts.
+- Credential values do not appear in CLI output or errors.
+- Existing exit-code behavior remains unchanged.
+- Console-script and module entry points remain consistent.
+
 ## Future Milestones
 
 Future milestones are deferred and must be approved before implementation.
 
-Possible milestone 2 topics:
+Possible future topics:
 
+- Cookie or Set-Cookie header redaction after false-positive behavior is defined.
 - Additional deterministic HTTP header rules, such as selected API-key headers.
-- Cookie header redaction after false-positive behavior is defined.
+- Email or client-identifier redaction after scope and false-positive behavior are defined.
 - Optional machine-readable safe report format.
 - More precise parsing for structured evidence formats.
-
-Possible milestone 3 topics:
-
 - Directory processing with explicit partial-failure semantics.
 - More robust atomic-output strategy.
 - Optional stable pseudonymous replacements if approved.
@@ -198,6 +368,12 @@ Possible milestone 3 topics:
 
 ## Functionality Explicitly Deferred
 
+- Cookie and Set-Cookie sanitization.
+- API-key-specific header sanitization.
+- Email redaction.
+- Client-identifier redaction.
+- Full HTTP header/body parsing.
+- Folded-header parsing.
 - Directory recursion.
 - Multiple input files.
 - Configuration files.
@@ -206,6 +382,7 @@ Possible milestone 3 topics:
 - LLM-assisted detection.
 - Network integrations.
 - Telemetry.
+- Persistence.
 - Debug mode.
 - Overwrite mode.
 - Atomic replacement guarantee.

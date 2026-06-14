@@ -3,7 +3,7 @@
 ## Protected Assets
 
 - Original evidence files.
-- Detected sensitive values, including authorization tokens and future supported secret types.
+- Detected sensitive values, including Bearer tokens, Basic credentials, custom or structured Authorization credentials, and future supported secret types.
 - Sanitized output integrity.
 - User trust that reported findings do not leak secret contents.
 - Local filesystem state at source and destination paths.
@@ -36,6 +36,7 @@
 - Dry-run mode must not create output or temporary files.
 - Detected values must never appear in terminal output, reports, exceptions, tracebacks, test snapshots, or logs.
 - Findings and reports must not store matched secret values.
+- Reports for generic Authorization schemes must not include custom scheme names as rule identifiers.
 - The tool must not perform network calls or telemetry.
 - The first implementation must not use LLM detection.
 - Tests must use synthetic data only.
@@ -59,6 +60,7 @@ Safe output must not include:
 - Raw input bytes.
 - Decoded input snippets.
 - Replacement previews with surrounding evidence.
+- Custom Authorization scheme names in report rule identifiers.
 
 Sensitive values must not be accepted as command-line arguments. CLI arguments should be limited to paths and flags so secrets are not encouraged to appear in shell history or process listings.
 
@@ -128,11 +130,25 @@ The MVP processes complete files in memory. Inputs larger than 10 MiB must be re
 
 ### Structured HTTP Syntax
 
-The initial rule is limited to HTTP-style `Authorization: Bearer` header lines. It should not redact arbitrary prose containing the word `Bearer`.
+Milestone 1 is limited to HTTP-style `Authorization: Bearer` header lines. It should not redact arbitrary prose containing the word `Bearer`.
+
+Milestone 2 expands only within HTTP-style `Authorization` header lines. It supports Bearer, Basic, and syntactically valid unknown, custom, or structured authorization schemes. It does not add Cookie, Set-Cookie, API-key-specific header, email, or client-identifier sanitization.
+
+Milestone 2 uses the ASCII HTTP token character set for auth-scheme names:
+
+```text
+!#$%&'*+-.^_`|~0-9A-Za-z
+```
+
+Unicode scheme names, malformed schemes, folded headers, and indented headers remain unsupported and unchanged.
+
+Full HTTP header/body boundary parsing is deferred. As a result, an exact header-like `Authorization:` line inside a message body may be sanitized. This is an accepted false-positive risk for milestone 2.
+
+Basic credentials are sensitive but are not decoded or validated. Generic structured credentials, such as Digest, AWS, AMX, OAuth, Signature, or custom parameters, are sensitive and are redacted as one whole credential section without parsing individual parameters.
 
 ## Regex Risks
 
-Regex can be appropriate for the milestone 1 bearer rule if the pattern is line-oriented, bounded, and avoids nested quantifiers. Tests should include long non-matching lines and malformed header-like lines to reduce catastrophic-backtracking risk.
+Regex can be appropriate for the milestone 1 bearer rule and milestone 2 Authorization-header finder if patterns are line-oriented, bounded, and avoid nested quantifiers. Tests should include long non-matching lines and malformed header-like lines to reduce catastrophic-backtracking risk.
 
 Regex is not the only approved parsing mechanism. Future structured formats may require parsers or purpose-built scanners instead of broad regular expressions.
 
@@ -143,6 +159,10 @@ Milestone 1 has one rule, so generalized rule ordering is not needed. The bearer
 Repeated sanitization must be idempotent for the bearer rule. The fixed marker `<REDACTED:authorization.bearer>` must not be treated as a new bearer credential on subsequent runs.
 
 Replacement-token collisions are possible if the original evidence already contains the marker. This is acceptable for milestone 1 because reports only count actual replacements and the marker is deterministic. More advanced collision handling is deferred.
+
+Milestone 2 should use one coherent Authorization-header finder that produces at most one finding per Authorization line. Bearer and Basic branches must not fall through to the generic branch when their specialized validation fails. Generic fallback applies only to schemes other than Bearer and Basic.
+
+Milestone 2 approved markers are `<REDACTED:authorization.bearer>`, `<REDACTED:authorization.basic>`, and `<REDACTED:authorization.credentials>`. If the complete credential section is exactly any approved marker, the value is already sanitized and produces no finding or count, even when the marker appears under a different scheme. The sanitizer must not correct or normalize wrong-scheme markers. A marker embedded inside a larger raw credential value is not considered already sanitized.
 
 ## Dry-Run Behavior
 
@@ -161,6 +181,8 @@ Directory processing is deferred. Future directory mode must define partial-fail
 - Partial output can remain after abrupt termination.
 - Metadata is intentionally not preserved.
 - Binary detection is limited and incomplete by design.
+- Milestone 2 does not guarantee detection of every Authorization-like credential or every possible secret.
+- Milestone 2 marker collisions are accepted and handled deterministically.
 
 ## Explicitly Unsupported Adversarial Filesystem Scenarios
 
