@@ -14,12 +14,14 @@ RULE_ID_AUTHORIZATION_BASIC = "authorization.basic"
 RULE_ID_AUTHORIZATION_OTHER = "authorization.other"
 RULE_ID_COOKIE_VALUE = "cookie.value"
 RULE_ID_COOKIE_HEADER = "cookie.header"
+RULE_ID_HEADER_SECRET = "header.secret"
 
 REDACTION_MARKER_AUTHORIZATION_BEARER = "<REDACTED:authorization.bearer>"
 REDACTION_MARKER_AUTHORIZATION_BASIC = "<REDACTED:authorization.basic>"
 REDACTION_MARKER_AUTHORIZATION_CREDENTIALS = "<REDACTED:authorization.credentials>"
 REDACTION_MARKER_COOKIE_VALUE = "<REDACTED:cookie.value>"
 REDACTION_MARKER_COOKIE_HEADER = "<REDACTED:cookie.header>"
+REDACTION_MARKER_HEADER_SECRET = "<REDACTED:header.secret>"
 COOKIE_REDACTION_MARKER_PREFIX = "<REDACTED:cookie."
 REDACTION_MARKER = REDACTION_MARKER_AUTHORIZATION_BEARER
 APPROVED_REDACTION_MARKERS = frozenset(
@@ -109,6 +111,44 @@ TELEMETRY_COOKIE_PREFIXES = (
 HARMLESS_COOKIE_NAMES = frozenset(("theme", "color_scheme", "display_mode"))
 SENSITIVE_ASPSESSIONID_PREFIX = "aspsessionid"
 SENSITIVE_REMEMBER_WEB_PREFIX = "remember_web_"
+_SENSITIVE_HEADER_NAMES = frozenset(
+    (
+        "x-api-key",
+        "api-key",
+        "apikey",
+        "x-apikey",
+        "api_key",
+        "x-api_key",
+        "x-auth-token",
+        "auth-token",
+        "x-access-token",
+        "access-token",
+        "x-session-token",
+        "session-token",
+        "x-id-token",
+        "id-token",
+        "x-refresh-token",
+        "refresh-token",
+        "x-csrf-token",
+        "csrf-token",
+        "x-xsrf-token",
+        "xsrf-token",
+        "x-csrftoken",
+        "csrftoken",
+        "x-xsrftoken",
+        "x-csrf",
+        "csrf",
+        "x-amz-security-token",
+        "x-amz-credential",
+        "x-amz-signature",
+        "x-goog-api-key",
+        "x-goog-signature",
+        "x-ms-token-aad-access-token",
+        "x-secret",
+        "x-client-secret",
+        "client-secret",
+    )
+)
 
 EXIT_INTERNAL_ERROR = 1
 EXIT_UNSAFE_PATH = 3
@@ -274,6 +314,54 @@ def find_cookie_values(text: str) -> tuple[Finding, ...]:
                     replacement=REDACTION_MARKER_COOKIE_VALUE,
                 )
             )
+
+    return tuple(findings)
+
+
+def _find_sensitive_header_values(text: str) -> tuple[Finding, ...]:
+    """Find selected sensitive HTTP-like header values."""
+    findings: list[Finding] = []
+
+    for line_start, line_content_end, next_line_start in _iter_physical_lines(text):
+        line = text[line_start:line_content_end]
+        position = 0
+        while position < len(line) and line[position] not in " \t:":
+            position += 1
+
+        header_name = line[:position]
+        if header_name.lower() not in _SENSITIVE_HEADER_NAMES:
+            continue
+
+        while position < len(line) and line[position] in " \t":
+            position += 1
+        if position >= len(line) or line[position] != ":":
+            continue
+
+        if next_line_start < len(text) and text[next_line_start] in " \t":
+            continue
+
+        position += 1
+        while position < len(line) and line[position] in " \t":
+            position += 1
+
+        value_start = line_start + position
+        header_value = text[value_start:line_content_end]
+        trimmed_value_length = len(header_value.rstrip(" \t"))
+        if trimmed_value_length == 0:
+            continue
+
+        trimmed_value = header_value[:trimmed_value_length]
+        if trimmed_value == REDACTION_MARKER_HEADER_SECRET:
+            continue
+
+        findings.append(
+            Finding(
+                rule_id=RULE_ID_HEADER_SECRET,
+                start=value_start,
+                end=value_start + trimmed_value_length,
+                replacement=REDACTION_MARKER_HEADER_SECRET,
+            )
+        )
 
     return tuple(findings)
 
@@ -520,7 +608,11 @@ def apply_findings(text: str, findings: Sequence[Finding]) -> str:
 
 def sanitize_text(text: str) -> tuple[str, SanitizationReport]:
     """Sanitize decoded text with the approved rules."""
-    findings = find_authorization_credentials(text) + find_cookie_values(text)
+    findings = (
+        find_authorization_credentials(text)
+        + find_cookie_values(text)
+        + _find_sensitive_header_values(text)
+    )
     sanitized = apply_findings(text, findings)
     counts: dict[str, int] = {}
     for finding in findings:

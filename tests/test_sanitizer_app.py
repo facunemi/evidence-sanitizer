@@ -18,11 +18,13 @@ from evidence_sanitizer.sanitizer import (
     REDACTION_MARKER_AUTHORIZATION_CREDENTIALS,
     REDACTION_MARKER_COOKIE_HEADER,
     REDACTION_MARKER_COOKIE_VALUE,
+    REDACTION_MARKER_HEADER_SECRET,
     RULE_ID_AUTHORIZATION_BASIC,
     RULE_ID_AUTHORIZATION_BEARER,
     RULE_ID_AUTHORIZATION_OTHER,
     RULE_ID_COOKIE_HEADER,
     RULE_ID_COOKIE_VALUE,
+    RULE_ID_HEADER_SECRET,
     SafeError,
     sanitize_file,
 )
@@ -34,6 +36,7 @@ COOKIE_SESSION_VALUE = "synthetic-cookie-session"
 COOKIE_HARMLESS_THEME_VALUE = "synthetic-cookie-theme"
 COOKIE_FALLBACK_VALUE = "synthetic-cookie-fallback"
 COOKIE_FALLBACK_THEME_VALUE = "synthetic-cookie-fallback-theme"
+HEADER_SECRET_VALUE = "synthetic-sensitive-header-value"
 SENSITIVE_VALUES = (
     TOKEN,
     BASIC_TOKEN,
@@ -41,6 +44,7 @@ SENSITIVE_VALUES = (
     COOKIE_SESSION_VALUE,
     COOKIE_FALLBACK_VALUE,
     COOKIE_FALLBACK_THEME_VALUE,
+    HEADER_SECRET_VALUE,
 )
 
 
@@ -126,6 +130,7 @@ def test_authorization_and_cookie_headers_sanitized_and_reported(
         f"Authorization: Bearer {TOKEN}\n"
         f"Authorization: Basic {BASIC_TOKEN}\n"
         f"Authorization: AMX {CUSTOM_CREDENTIAL}\n"
+        f"X-API-Key: {HEADER_SECRET_VALUE}\n"
         "Accept: application/json\n"
     ).encode()
     expected = (
@@ -138,6 +143,7 @@ def test_authorization_and_cookie_headers_sanitized_and_reported(
         f"Authorization: Basic {REDACTION_MARKER_AUTHORIZATION_BASIC}\n"
         "Authorization: AMX "
         f"{REDACTION_MARKER_AUTHORIZATION_CREDENTIALS}\n"
+        f"X-API-Key: {REDACTION_MARKER_HEADER_SECRET}\n"
         "Accept: application/json\n"
     ).encode()
     input_path.write_bytes(source)
@@ -151,6 +157,7 @@ def test_authorization_and_cookie_headers_sanitized_and_reported(
         RULE_ID_AUTHORIZATION_BEARER: 1,
         RULE_ID_AUTHORIZATION_BASIC: 1,
         RULE_ID_AUTHORIZATION_OTHER: 1,
+        RULE_ID_HEADER_SECRET: 1,
     }
     assert_sanitized_output(output_path, expected)
     assert_source_unchanged(input_path, source)
@@ -267,7 +274,9 @@ def test_dry_run_creates_no_output_and_reports_counts(tmp_path: Path) -> None:
     input_path = tmp_path / "evidence.txt"
     output_path = tmp_path / "evidence.sanitized.txt"
     source = (
-        f"Cookie: session={COOKIE_SESSION_VALUE}\nAuthorization: Bearer {TOKEN}\n"
+        f"Cookie: session={COOKIE_SESSION_VALUE}\n"
+        f"Authorization: Bearer {TOKEN}\n"
+        f"X-API-Key: {HEADER_SECRET_VALUE}\n"
     ).encode()
     input_path.write_bytes(source)
 
@@ -277,6 +286,7 @@ def test_dry_run_creates_no_output_and_reports_counts(tmp_path: Path) -> None:
     assert result.report.counts_by_rule == {
         RULE_ID_COOKIE_VALUE: 1,
         RULE_ID_AUTHORIZATION_BEARER: 1,
+        RULE_ID_HEADER_SECRET: 1,
     }
     assert not output_path.exists()
     assert_source_unchanged(input_path, source)
@@ -370,6 +380,7 @@ def test_file_level_idempotence(tmp_path: Path) -> None:
     source = (
         f"Cookie: session={COOKIE_SESSION_VALUE}; theme={COOKIE_HARMLESS_THEME_VALUE}\n"
         f"Authorization: Bearer {TOKEN}\n"
+        f"X-API-Key: {HEADER_SECRET_VALUE}\n"
     ).encode()
     input_path.write_bytes(source)
 
@@ -380,6 +391,7 @@ def test_file_level_idempotence(tmp_path: Path) -> None:
     assert first_result.report.counts_by_rule == {
         RULE_ID_COOKIE_VALUE: 1,
         RULE_ID_AUTHORIZATION_BEARER: 1,
+        RULE_ID_HEADER_SECRET: 1,
     }
     assert second_result.report.counts_by_rule == {}
     assert second_output_path.read_bytes() == first_output

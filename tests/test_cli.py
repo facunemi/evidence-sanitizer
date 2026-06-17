@@ -13,6 +13,7 @@ from evidence_sanitizer.sanitizer import (
     REDACTION_MARKER_AUTHORIZATION_CREDENTIALS,
     REDACTION_MARKER_COOKIE_HEADER,
     REDACTION_MARKER_COOKIE_VALUE,
+    REDACTION_MARKER_HEADER_SECRET,
 )
 
 PRODUCT_DESCRIPTION = (
@@ -26,12 +27,14 @@ SYNTHETIC_CUSTOM_CREDENTIAL = "appId:synthetic-signature:nonce:timestamp"
 SYNTHETIC_COOKIE_VALUE = "synthetic-cookie-value"
 SYNTHETIC_HARMLESS_COOKIE_VALUE = "synthetic-second-cookie-value"
 SYNTHETIC_FALLBACK_COOKIE_VALUE = "synthetic-fallback-cookie-value"
+SYNTHETIC_HEADER_SECRET_VALUE = "synthetic-sensitive-header-value"
 OUTPUT_FORBIDDEN_VALUES = (
     SYNTHETIC_CREDENTIAL,
     SYNTHETIC_BASIC_CREDENTIAL,
     SYNTHETIC_CUSTOM_CREDENTIAL,
     SYNTHETIC_COOKIE_VALUE,
     SYNTHETIC_FALLBACK_COOKIE_VALUE,
+    SYNTHETIC_HEADER_SECRET_VALUE,
 )
 CLI_FORBIDDEN_VALUES = OUTPUT_FORBIDDEN_VALUES + (SYNTHETIC_HARMLESS_COOKIE_VALUE,)
 
@@ -137,6 +140,7 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
             f"Authorization: Bearer {SYNTHETIC_CREDENTIAL}\n"
             f"Authorization: Basic {SYNTHETIC_BASIC_CREDENTIAL}\n"
             f"Authorization: AMX {SYNTHETIC_CUSTOM_CREDENTIAL}\n"
+            f"X-API-Key: {SYNTHETIC_HEADER_SECRET_VALUE}\n"
             "Accept: application/json\n"
         ).encode()
         expected = (
@@ -149,6 +153,7 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
             f"Authorization: Basic {REDACTION_MARKER_AUTHORIZATION_BASIC}\n"
             "Authorization: AMX "
             f"{REDACTION_MARKER_AUTHORIZATION_CREDENTIALS}\n"
+            f"X-API-Key: {REDACTION_MARKER_HEADER_SECRET}\n"
             "Accept: application/json\n"
         ).encode()
         input_path.write_bytes(source)
@@ -166,8 +171,10 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
         assert "authorization.other: 1" in output
         assert "cookie.header: 1" in output
         assert "cookie.value: 1" in output
+        assert "header.secret: 1" in output
         assert "Authorization:" not in output
         assert "Cookie:" not in output
+        assert "X-API-Key:" not in output
         assert_output_bytes(output_path, expected)
         assert_file_unchanged(input_path, source)
 
@@ -179,7 +186,8 @@ def test_sanitize_dry_run_reports_counts_without_creating_output(
     output_path = tmp_path / "evidence.sanitized.txt"
     input_path.write_text(
         f"Cookie: session={SYNTHETIC_COOKIE_VALUE}\n"
-        f"Authorization: Bearer {SYNTHETIC_CREDENTIAL}\n",
+        f"Authorization: Bearer {SYNTHETIC_CREDENTIAL}\n"
+        f"X-Auth-Token: {SYNTHETIC_HEADER_SECRET_VALUE}\n",
         encoding="utf-8",
     )
 
@@ -194,6 +202,7 @@ def test_sanitize_dry_run_reports_counts_without_creating_output(
     assert "Dry run: no output written" in output
     assert "authorization.bearer: 1" in output
     assert "cookie.value: 1" in output
+    assert "header.secret: 1" in output
     assert not output_path.exists()
 
 
