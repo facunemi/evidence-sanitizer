@@ -3,7 +3,7 @@
 ## Protected Assets
 
 - Original evidence files.
-- Detected sensitive values, including Bearer tokens, Basic credentials, custom or structured Authorization credentials, Cookie values, selected sensitive API/authentication-related header values, and future supported secret types.
+- Detected sensitive values, including Bearer tokens, Basic credentials, custom or structured Authorization credentials, Cookie values, selected sensitive API/authentication-related header values, selected sensitive URL query parameter values, and future supported secret types.
 - Sanitized output integrity.
 - User trust that reported findings do not leak secret contents.
 - Local filesystem state at source and destination paths.
@@ -40,6 +40,7 @@
 - Reports for Cookie findings must use only fixed rule identifiers and must not derive rule identifiers from cookie names.
 - Milestone 4 Cookie classification must use only deterministic Cookie-name rules and must not inspect, decode, parse, infer from, or classify using Cookie values.
 - Reports for selected sensitive-header findings must use only fixed rule identifier `header.secret` and must not derive rule identifiers from header names, header groups, or detected values.
+- Reports for selected query-parameter findings must use only fixed rule identifier `query.secret` and must not derive rule identifiers from parameter names, parameter groups, or detected values.
 - The tool must not perform network calls or telemetry.
 - The first implementation must not use LLM detection.
 - Tests must use synthetic data only.
@@ -69,6 +70,8 @@ Safe output must not include:
 - Cookie classification categories derived into dynamic report identifiers.
 - Selected sensitive-header values or source excerpts.
 - Selected sensitive-header names as dynamic report identifiers.
+- Selected query parameter values or source excerpts.
+- Selected query parameter names as dynamic report identifiers.
 
 Sensitive values must not be accepted as command-line arguments. CLI arguments should be limited to paths and flags so secrets are not encouraged to appear in shell history or process listings.
 
@@ -176,13 +179,21 @@ Milestone 5 intentionally preserves header names for evidence context. Preserved
 
 Milestone 5 intentionally defers IP and client identity headers such as `x-forwarded-for`, `x-real-ip`, `cf-connecting-ip`, `true-client-ip`, and `x-client-ip` because they are privacy identifiers rather than authentication secrets. Identifier headers such as `x-client-id`, `client-id`, `x-tenant-id`, `tenant-id`, `x-user-id`, and `user-id` are also deferred because they are not always secrets. `Proxy-Authorization` is deferred because it is semantically close to `Authorization` and requires a separate decision on scheme-preserving behavior, markers, and rule IDs.
 
+Milestone 6 expands only to selected sensitive raw URL query parameter values in decoded text evidence. It supports an approved fixed list of exact raw parameter names and replaces raw values after `=` with `<REDACTED:query.secret>`. It does not URL-decode, URL-re-encode, recursively parse URL-valued parameters, parse JSON, parse XML, parse structured form bodies, parse multipart bodies, parse HTML, parse JavaScript, use value-based classification, use substring parameter matching, use grouped rule IDs, use per-parameter rule IDs, use dynamic report IDs, add user configuration, add plugins, add registries, add new dependencies, or add new exit codes.
+
+Milestone 6 selected query parameters may contain OAuth/OIDC-style access, refresh, ID, and auth tokens; session identifiers; JWTs; API keys; client secrets; signed URL signatures; and cloud temporary-access parameters. `sig` and `signature` are often highly sensitive in signed URLs and callback flows. Cloud signature parameters such as `x-amz-signature`, `x-amz-security-token`, and `x-amz-credential` can authorize temporary access. API key parameters can authenticate requests.
+
+Milestone 6 intentionally defers broad names such as `key`, `code`, `state`, `nonce`, `secret`, `sign`, and `signed` to avoid broad false positives. Short cloud/SAS names such as `se`, `sp`, `sv`, `sr`, and `st` are deferred until a dedicated signed-URL context is approved. Tracking identifiers such as `utm_source`, `gclid`, `fbclid`, `msclkid`, and `_ga` are privacy or telemetry identifiers and belong in a separate milestone. Password and SAML/form-like parameter names are deferred until body/form parsing scope is addressed or explicitly approved.
+
 Folded Cookie headers are unsupported in milestone 3. If an exact `Cookie:` line is immediately followed by a physical line beginning with a space or tab, the folded form remains completely unchanged. This is a residual false-negative risk because folded Cookie values may remain in output. Full folded-header parsing is deferred.
 
 Folded selected sensitive headers are unsupported in milestone 5. If an exact sensitive header line is immediately followed by a physical line beginning with a space or tab, the complete folded form remains unchanged and produces no `header.secret` finding. This is a residual false-negative risk because folded sensitive-header values may remain in output. Full folded-header parsing remains deferred.
 
-Full HTTP header/body boundary parsing remains deferred in milestone 3 and milestone 5. As a result, exact header-like `Cookie:` or selected sensitive-header lines inside message bodies may be sanitized. This is an accepted false-positive risk for line-start header rules.
+Full HTTP header/body boundary parsing remains deferred in milestone 3, milestone 5, and milestone 6. As a result, exact header-like `Cookie:` or selected sensitive-header lines inside message bodies may be sanitized, and exact raw URL-like text inside bodies or logs may be sanitized. This is an accepted false-positive risk for deterministic line-oriented and query-scanning rules.
 
-`Set-Cookie`, URLs, query strings, JSON bodies, XML bodies, form bodies, multipart bodies, and non-approved custom secret headers remain out of scope in milestone 5 and may retain secrets.
+Percent-encoded query parameter names are not decoded in milestone 6. For example, `access%5Ftoken` does not match `access_token` and may retain a sensitive value. Recursive URL-in-value parsing is deferred, so nested URL query strings may retain sensitive values. Malformed or unusual query strings may be partially missed. The milestone does not claim complete secret-removal coverage.
+
+`Set-Cookie`, JSON bodies, XML bodies, form bodies as structured form data, multipart bodies, HTML, JavaScript, non-approved custom secret headers, deferred query parameter names, and nested URL-in-value parsing remain out of scope in milestone 6 and may retain secrets.
 
 NUL remains rejected by the existing input-validation path. CR and LF are line delimiters, not Cookie-value characters. Other unsupported control characters inside a Cookie value trigger whole-header fallback rather than a new global error or a new exit code.
 
@@ -193,6 +204,8 @@ Regex can be appropriate for the milestone 1 bearer rule and milestone 2 Authori
 Milestone 3 Cookie parsing should use a bounded line detector plus a deterministic scanner for the header value. The scanner should parse complete Cookie values before emitting per-value findings. Performance tests are required only if the chosen implementation creates realistic risk, such as catastrophic backtracking or unbounded parsing behavior.
 
 Milestone 5 selected sensitive-header detection should use the existing physical-line iteration plus exact header-name checks. A broad regex or substring search is not required. Performance tests are required only if the chosen implementation creates realistic risk.
+
+Milestone 6 selected query-parameter detection should use a small deterministic raw query scanner. A full URL parser, recursive parser, broad regex, substring search, URL-decoding pass, or URL-re-encoding pass is not required. Performance tests are required only if the chosen implementation creates realistic risk, such as unbounded scanning or catastrophic backtracking.
 
 Regex is not the only approved parsing mechanism. Future structured formats may require parsers or purpose-built scanners instead of broad regular expressions.
 
@@ -215,6 +228,10 @@ Milestone 3 approved Cookie markers are `<REDACTED:cookie.value>` and `<REDACTED
 Milestone 4 keeps the same Cookie markers and rule IDs. It does not approve category-specific markers or report IDs. Values such as `<REDACTED:cookie.sensitive>` and `<REDACTED:cookie.unknown>` are ordinary raw values and should be redacted as `cookie.value` unless existing parser behavior requires whole-header fallback. Existing `<REDACTED:cookie.value>` and `<REDACTED:cookie.header>` markers remain idempotent, and previously redacted telemetry values cannot be recovered.
 
 Milestone 5 uses only rule ID `header.secret` and marker `<REDACTED:header.secret>`. If the complete trimmed selected sensitive-header value is exactly `<REDACTED:header.secret>`, the value is already sanitized and produces no finding or count. A marker embedded inside a larger raw value is not already sanitized and must be redacted. Unapproved header marker-like values and wrong-family Authorization or Cookie markers inside selected sensitive headers are treated as raw and redacted. Replacement-marker collisions are accepted and handled deterministically. Do not introduce a generalized marker framework.
+
+Milestone 6 uses only rule ID `query.secret` and marker `<REDACTED:query.secret>`. If the complete raw selected query parameter value is exactly `<REDACTED:query.secret>`, the value is already sanitized and produces no finding or count. Marker handling must be marker-aware so the approved marker's `<` and `>` do not break idempotence or query boundary detection. A marker embedded inside a larger raw query value is not already sanitized and must be redacted. Unapproved query marker-like values and wrong-family Authorization, Cookie, or sensitive-header markers inside selected query parameter values are treated as raw and redacted. Replacement-marker collisions are accepted and handled deterministically. Do not introduce a generalized marker framework.
+
+Existing Authorization, Cookie, and selected sensitive-header findings are authoritative in milestone 6. Query findings that overlap existing findings must be skipped and produce no `query.secret` count. `apply_findings` remains the final overlap guard. A preserved harmless Cookie value may still receive a `query.secret` finding when no Cookie finding overlaps because harmless Cookie values are intentionally preserved.
 
 ## Dry-Run Behavior
 
@@ -251,7 +268,14 @@ Directory processing is deferred. Future directory mode must define partial-fail
 - Milestone 5 may sanitize exact selected sensitive-header-like lines inside message bodies because full HTTP parsing is deferred.
 - Milestone 5 marker collisions are accepted and handled deterministically.
 - IP/client identity headers and identifier headers remain deferred to a privacy/identifier milestone.
-- `Proxy-Authorization`, `Set-Cookie`, URLs, query strings, and bodies remain out of scope.
+- Milestone 6 does not guarantee detection of every sensitive query parameter or every possible secret.
+- Milestone 6 may sanitize exact raw URL-like text inside bodies or logs because full HTTP parsing is deferred.
+- Milestone 6 percent-encoded query parameter names remain unsupported and may retain sensitive values.
+- Milestone 6 does not recursively parse URL-valued query parameters, so nested query values may remain raw.
+- Milestone 6 marker collisions are accepted and handled deterministically.
+- Existing Authorization, Cookie, and selected sensitive-header findings remain authoritative for overlapping spans.
+- IP/client identity headers, identifier headers, broad query names, short SAS names, tracking parameters, password-like query names, and SAML/form-like query names remain deferred to future milestones or approvals.
+- `Proxy-Authorization`, `Set-Cookie`, JSON bodies, XML bodies, form bodies as structured form data, multipart bodies, HTML, JavaScript, and unsupported body parsing remain out of scope.
 
 ## Explicitly Unsupported Adversarial Filesystem Scenarios
 

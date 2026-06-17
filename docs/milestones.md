@@ -1286,6 +1286,469 @@ Required application and CLI test coverage:
 - Existing exit-code behavior remains unchanged.
 - Console-script and module entry points remain consistent.
 
+## Milestone 6: Selected Sensitive URL Query Parameter Sanitizer
+
+Milestone 6 adds deterministic sanitization for selected sensitive raw URL query parameter values in decoded text evidence while preserving all milestone 1, milestone 2, milestone 3, milestone 4, and milestone 5 file-processing, safety, encoding, newline, reporting, CLI, Authorization, Cookie, selected sensitive-header, parser, fallback, classification, and marker behavior.
+
+Milestone 6 scope:
+
+- Support selected sensitive raw URL query parameter values in decoded text evidence.
+- Match approved raw parameter names exactly and case-insensitively.
+- Replace complete raw values after `=` with `<REDACTED:query.secret>`.
+- Preserve parameter name casing, `=`, separators, parameter order, repeated parameters, surrounding URL/query text, UTF-8 BOM state, LF, CRLF, mixed newline sequences, and final-newline state through the existing text flow.
+- Operate on raw URL/query-like substrings appearing in HTTP request lines, absolute URLs, relative paths with query strings, query-only tokens such as `?sig=...`, non-sensitive header values such as `Referer` and `Location`, and raw body or log lines when matching is syntactic and deterministic.
+- Keep one input file, one explicit output file, and complete-file in-memory processing.
+- Keep deterministic built-in behavior only.
+
+Milestone 6 must not include:
+
+- URL decoding.
+- URL re-encoding.
+- Recursive parsing of URL-valued query parameter values.
+- JSON parsing.
+- XML parsing.
+- Form-body parsing as structured form data.
+- Multipart parsing.
+- HTML parsing.
+- JavaScript parsing.
+- Full HTTP message parsing.
+- Directory processing or multiple input files.
+- Runtime-editable allowlists.
+- Configuration files.
+- User-defined rules.
+- Plugin APIs or plugin registries.
+- Registries, factories, inheritance hierarchies, dependency injection, configurable rule ordering, parser frameworks, generalized policy engines, or generalized precedence engines.
+- Value parsing, value decoding, value classification, or value-based classification.
+- Query parameter substring matching.
+- Grouped rule IDs, per-parameter rule IDs, category-specific markers, or dynamic report IDs.
+- External data downloads.
+- Debug mode.
+- Network features.
+- Telemetry collection.
+- LLM detection.
+- Persistence.
+- New dependencies.
+- New modules.
+- New exit codes.
+- Overwrite mode.
+- Atomic output replacement guarantee.
+- Metadata preservation.
+
+Approved milestone 6 rule ID:
+
+```text
+query.secret
+```
+
+Approved milestone 6 marker:
+
+```text
+<REDACTED:query.secret>
+```
+
+Do not introduce grouped or per-parameter rule IDs such as:
+
+```text
+query.token
+query.api_key
+query.signature
+query.oauth
+```
+
+Do not introduce per-parameter dynamic report IDs. The generic marker keeps the marker surface small, avoids revealing the exact secret type in reports, avoids marker proliferation, preserves simple idempotence, and remains consistent with `header.secret`. Parameter names remain visible in sanitized evidence for URL structure.
+
+Approved auth/session/token parameter names, matched case-insensitively as exact raw names:
+
+```text
+access_token
+auth_token
+id_token
+jwt
+refresh_token
+session
+session_id
+sid
+token
+```
+
+Approved API key parameter names, matched case-insensitively as exact raw names:
+
+```text
+api-key
+api_key
+apikey
+```
+
+Approved OAuth/client secret parameter name, matched case-insensitively as an exact raw name:
+
+```text
+client_secret
+```
+
+Approved signature and signed URL parameter names, matched case-insensitively as exact raw names:
+
+```text
+sig
+signature
+x-amz-credential
+x-amz-security-token
+x-amz-signature
+x-goog-credential
+x-goog-signature
+```
+
+`sig` and `signature` are explicitly approved because real penetration-testing evidence may include signed URL or callback query parameters using those names.
+
+Deferred parameter names:
+
+```text
+key
+code
+state
+nonce
+secret
+sign
+signed
+se
+sp
+sv
+sr
+st
+expires
+expiry
+timestamp
+redirect_uri
+url
+email
+user
+user_id
+bearer
+sessionid
+app_key
+subscription-key
+ocp-apim-subscription-key
+client_assertion
+assertion
+samlresponse
+saml_response
+idp_token
+password
+passwd
+pwd
+shared_secret
+private_key
+csrf
+csrf_token
+xsrf
+xsrf_token
+utm_source
+utm_medium
+utm_campaign
+gclid
+fbclid
+msclkid
+_ga
+```
+
+Deferred-name rationale:
+
+- `key`, `code`, `state`, `nonce`, `secret`, `sign`, and `signed` are useful but too broad for the initial milestone.
+- Short cloud/SAS names such as `se`, `sp`, `sv`, `sr`, and `st` are too broad without a dedicated signed-URL context.
+- Tracking parameters are privacy identifiers and belong in a separate privacy/telemetry milestone.
+- Password and SAML/form-like parameters are deferred until body/form parsing scope is addressed or explicitly approved.
+
+Matching semantics:
+
+- Parameter-name matching is exact, raw, and case-insensitive.
+- Matching applies only to the raw parameter name before `=`.
+- No URL decoding is performed.
+- Percent-encoded names are not matched.
+- `access%5Ftoken` does not match `access_token`.
+- `_`, `-`, and `.` remain distinct.
+- No substring matching is approved.
+- No value-based classification is approved.
+- Do not infer sensitivity from parameter position, value shape, length, UUID-like format, apparent encoding, or surrounding URL text.
+
+Near misses remain unchanged:
+
+```text
+keyboard
+monkey
+tokenizer
+access_token_expires
+signature_algorithm
+design
+signal
+signed_in
+code_verifier
+postcode
+state_name
+nonces
+api_key_name
+```
+
+Query boundary strategy:
+
+- Use a small raw query scanner, not a full URL parser.
+- `?` starts a raw query candidate when encountered in decoded text.
+- Repeated `?` inside the same query token is treated as data, not a recursive query start.
+- Multiple separate query tokens on one line are supported.
+- `&` separates parameters.
+- `;` also separates parameters.
+- `#` ends the current query segment.
+- Spaces, tabs, CR, LF, quotes, apostrophes, and backticks terminate the query token.
+- `<` and `>` are URL wrapping delimiters.
+- Angle-bracket wrapped URLs such as `<https://x.test/?sig=abc>` preserve the outer `>`.
+- Query parsing preserves all non-value bytes and text.
+- Parameter order is preserved.
+- Repeated parameters are preserved.
+- Separators are preserved.
+- No sorting, normalization, decoding, or re-encoding occurs.
+- `&amp;` is not decoded to `&` in milestone 6.
+
+Value span behavior:
+
+- For a matched parameter with `=`, replace only the complete raw value span.
+- Preserve parameter name casing.
+- Preserve `=`.
+- Preserve separators.
+- Preserve parameter order.
+- Preserve repeated parameters.
+- Preserve percent-encoding outside the replaced value.
+- Do not parse nested URLs inside values.
+- Do not redact non-approved parameters.
+
+Example:
+
+```text
+https://example.test/a?token=abc&theme=dark
+https://example.test/a?token=<REDACTED:query.secret>&theme=dark
+```
+
+Empty and no-value behavior:
+
+```text
+?token=value
+?token=<REDACTED:query.secret>
+```
+
+```text
+?token=
+?token=<REDACTED:query.secret>
+```
+
+Explicit empty sensitive parameter values are still intentional sensitive fields and are normalized to the marker. They count once.
+
+```text
+?token
+?token&foo=bar
+```
+
+Bare no-value parameters remain unchanged and produce no count because there is no value span to replace without changing structure.
+
+Marker policy:
+
+- The approved milestone 6 marker is `<REDACTED:query.secret>`.
+- An exact complete raw parameter value equal to `<REDACTED:query.secret>` is unchanged and produces no finding.
+- Marker handling must be marker-aware so the approved marker's `<` and `>` do not break idempotence or query boundary detection.
+- Embedded `<REDACTED:query.secret>` inside a larger raw value is treated as raw and redacted.
+- Unapproved query marker-like values are treated as raw and redacted.
+- Wrong-family markers such as `<REDACTED:header.secret>`, `<REDACTED:cookie.value>`, or `<REDACTED:authorization.bearer>` are treated as raw query values and redacted.
+- Repeated sanitization must produce byte-identical output.
+
+Examples:
+
+```text
+?token=<REDACTED:query.secret>
+?token=prefix<REDACTED:query.secret>suffix
+?token=<REDACTED:header.secret>
+?token=<REDACTED:cookie.value>
+```
+
+Expected output:
+
+```text
+?token=<REDACTED:query.secret>
+?token=<REDACTED:query.secret>
+?token=<REDACTED:query.secret>
+?token=<REDACTED:query.secret>
+```
+
+Interaction with existing rules:
+
+- Existing Authorization findings are authoritative and remain unchanged.
+- Existing Cookie findings are authoritative and remain unchanged.
+- Existing `header.secret` findings are authoritative and remain unchanged.
+- Query findings that overlap existing findings are skipped.
+- Query findings skipped because they overlap existing findings produce no count.
+- `apply_findings` remains the final overlap guard.
+
+Example:
+
+```http
+X-API-Key: https://x.test/?sig=abc
+```
+
+This reports only `header.secret` because the sensitive-header finding covers the URL value.
+
+A preserved harmless Cookie value may still receive a `query.secret` finding if no Cookie finding covers that span:
+
+```http
+Cookie: theme=https://x.test/?sig=abc
+Cookie: theme=https://x.test/?sig=<REDACTED:query.secret>
+```
+
+This is approved because `theme` is intentionally preserved by the Cookie rule and there is no overlapping Cookie finding.
+
+Reporting behavior:
+
+- `query.secret` counts one finding per approved query parameter value actually replaced.
+- Already-redacted exact query marker values produce no count.
+- Bare no-value parameters produce no count.
+- Non-approved parameters produce no count.
+- Query findings skipped because they overlap existing findings produce no count.
+- Reports contain only fixed rule ID `query.secret` and counts.
+- Reports never contain raw values, source excerpts, parameter names as dynamic IDs, or replacement previews.
+
+Architecture requirements:
+
+- Keep query behavior in `src/evidence_sanitizer/sanitizer.py` using small private constants and one private raw query finder.
+- Reuse `Finding`, `SanitizationReport`, `_iter_physical_lines` where useful for line-boundary consistency, `apply_findings`, `sanitize_text`, existing file handling, right-to-left replacement, and overlap protection.
+- Query finding should run after existing broader finders or otherwise filter out overlaps with existing findings.
+- Add no new public data structures or public APIs.
+- Do not add `query.py`, `rules/`, URL parsing dependencies, configuration files, user-editable policy, registries, plugins, dependency injection, inheritance, generalized parser frameworks, or recursive parsers.
+
+Compatibility requirements:
+
+- Existing `Authorization: Bearer` behavior remains unchanged.
+- Existing `Authorization: Basic` behavior remains unchanged.
+- Existing generic `Authorization` scheme behavior remains unchanged.
+- Authorization markers, counts, and idempotence remain unchanged.
+- Cookie parser behavior remains unchanged.
+- Cookie fallback behavior remains unchanged.
+- Cookie harmless preservation remains unchanged.
+- Cookie marker policy and counts remain unchanged.
+- Folded Cookie behavior remains unchanged.
+- `Set-Cookie` remains unchanged and out of scope.
+- Selected sensitive-header behavior remains unchanged.
+- Selected sensitive-header marker policy and counts remain unchanged.
+- Folded selected sensitive-header behavior remains unchanged.
+
+Accepted milestone 6 limitations:
+
+- Selected sensitive query parameters may contain OAuth/OIDC access, refresh, ID, and auth tokens, session identifiers, JWTs, API keys, client secrets, signed URL signatures, and cloud temporary-access parameters.
+- `sig` and `signature` are often highly sensitive in signed URLs and callback flows.
+- Cloud signature parameters can authorize temporary access.
+- Parameter names remain visible in sanitized evidence for URL structure.
+- Exact raw URL-like text inside bodies or logs may be redacted because full HTTP parsing remains deferred.
+- Malformed or unusual query strings may be partially missed.
+- Percent-encoded parameter names are not decoded and may be missed.
+- Recursive URL-in-value parsing is deferred.
+- Deferred parameter names may remain raw.
+- The tool does not guarantee detection or removal of every possible secret.
+
+### Milestone 6 Acceptance Criteria
+
+- Existing Authorization behavior remains unchanged and all existing Authorization regression tests remain valid.
+- Existing Cookie behavior remains unchanged and all existing Cookie regression tests remain valid.
+- Existing selected sensitive-header behavior remains unchanged and all existing sensitive-header regression tests remain valid.
+- Every approved query parameter name redacts when it appears as an exact raw query parameter name with `=`.
+- `sig` and `signature` redact.
+- Parameter-name matching is exact, raw, and case-insensitive.
+- No substring parameter matching is approved.
+- Near misses such as `keyboard`, `monkey`, `tokenizer`, `access_token_expires`, `signature_algorithm`, `design`, `signal`, `signed_in`, `code_verifier`, `postcode`, `state_name`, `nonces`, and `api_key_name` remain unchanged.
+- Deferred names including `code`, `state`, `nonce`, `key`, `secret`, `sign`, `signed`, `se`, `sp`, `sv`, `sr`, and `st` remain unchanged.
+- Percent-encoded names are not decoded; `access%5Ftoken` remains unchanged.
+- `_`, `-`, and `.` remain distinct.
+- `&` and `;` separate parameters.
+- `#` ends the current query segment.
+- Whitespace, quotes, apostrophes, backticks, and angle delimiters bound query tokens.
+- Angle-bracket wrapped URLs preserve the outer `>`.
+- Repeated parameters are supported.
+- Multiple query tokens per line are supported.
+- Repeated `?` inside one query token is treated as data, not recursive parsing.
+- `&amp;` is not decoded to `&`.
+- Parameter name casing, `=`, separators, parameter order, repeated parameters, surrounding text, line endings, UTF-8 BOM state, and final-newline state are preserved.
+- Explicit empty values such as `?token=` are redacted with `<REDACTED:query.secret>` and counted once.
+- Bare no-value parameters such as `?token` and `?token&foo=bar` remain unchanged for the bare parameter and produce no count for it.
+- Exact `<REDACTED:query.secret>` values are idempotent.
+- Embedded `<REDACTED:query.secret>` values are redacted.
+- Unapproved query marker-like values are redacted.
+- Wrong-family markers such as `<REDACTED:header.secret>`, `<REDACTED:cookie.value>`, and `<REDACTED:authorization.bearer>` are redacted in approved query parameter values.
+- Query findings overlapping Authorization, Cookie, or `header.secret` findings are skipped and produce no `query.secret` count.
+- Preserved harmless Cookie values may receive query redaction when no Cookie finding overlaps.
+- Reports contain only fixed rule ID `query.secret` and counts for query findings.
+- Query parameter names never become report IDs and never appear in report output.
+- Reports, CLI output, exceptions, logs, tests, and snapshots do not include redacted query values or source excerpts.
+- Findings do not store raw query values or parameter names.
+- No URL decoding, URL re-encoding, recursive URL parsing, JSON parsing, XML parsing, form-body parsing, multipart parsing, HTML parsing, JavaScript parsing, full HTTP parsing, directory processing, configuration file, runtime-editable allowlist, plugin, registry, network behavior, telemetry collection, LLM behavior, persistence, dependency, module, overwrite mode, or exit code is introduced.
+- Existing source immutability, output collision, dry-run, UTF-8, UTF-8 BOM, LF, CRLF, mixed-newline, final-newline, 10 MiB, NUL-byte, safe-error, and exit-code behavior remains unchanged.
+- Tests use only synthetic data.
+
+### Milestone 6 Verification Requirements
+
+Expected commands:
+
+```bash
+uv sync
+uv run evidence-sanitizer --help
+uv run python -m evidence_sanitizer --help
+uv run evidence-sanitizer sanitize --help
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src tests
+```
+
+Required unit test coverage:
+
+- Each approved auth/session/token parameter name.
+- Each approved API key parameter name.
+- `client_secret`.
+- Each approved signature and signed URL parameter name.
+- `sig` and `signature`.
+- Case-insensitive parameter-name matching.
+- Exact raw parameter-name matching.
+- Punctuation distinction for `_`, `-`, and `.`.
+- Near-miss parameter names unchanged.
+- Deferred parameter names unchanged.
+- Percent-encoded names unchanged.
+- Values in HTTP request lines, absolute URLs, relative paths, query-only tokens, non-sensitive header values, and raw body or log lines.
+- `&` and `;` separator behavior.
+- `#` query segment termination.
+- Spaces, tabs, CR, LF, quotes, apostrophes, backticks, `<`, and `>` boundary behavior.
+- Angle-bracket wrapper preservation.
+- Repeated parameters and multiple query tokens per line.
+- Repeated `?` inside a query token.
+- `&amp;` is not decoded.
+- Explicit empty values redacted.
+- Bare no-value parameters unchanged.
+- Exact approved marker idempotence.
+- Embedded approved marker redaction.
+- Unapproved query marker-like value redaction.
+- Wrong-family Authorization, Cookie, and sensitive-header marker redaction.
+- Query findings skipped when overlapping Authorization, Cookie, or `header.secret` findings.
+- Query redaction inside preserved harmless Cookie values when no Cookie finding overlaps.
+- Multiple query findings and repeated query parameters counted correctly.
+- Query findings do not store raw values or parameter names.
+- Performance coverage only if the chosen implementation creates realistic risk.
+
+Required application and CLI test coverage:
+
+- Authorization plus Cookie plus selected sensitive headers plus selected query parameters in one file.
+- Correct fixed counts for `authorization.bearer`, `authorization.basic`, `authorization.other`, `cookie.value`, `cookie.header`, `header.secret`, and `query.secret`.
+- Safe CLI output contains no query values, no source excerpts, and no parameter names as report IDs.
+- Source remains byte-for-byte unchanged.
+- Dry-run creates no output.
+- Existing output is not overwritten.
+- BOM and newline preservation remain unchanged.
+- Mixed line endings remain unchanged.
+- No-final-newline behavior remains unchanged.
+- Idempotence.
+- Existing Authorization, Cookie, and selected sensitive-header regression coverage remains passing.
+- Existing exit-code behavior remains unchanged.
+- Console-script and module entry points remain consistent.
+
 ## Future Milestones
 
 Future milestones are deferred and must be approved before implementation.

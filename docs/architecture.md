@@ -31,11 +31,13 @@ Milestone 4 extends the same Cookie-header responsibility with deterministic nam
 
 Milestone 5 adds one concrete selected-sensitive-header responsibility. Keep production behavior in `src/evidence_sanitizer/sanitizer.py` with small private constants for the fixed rule ID, marker, approved header-name set, and one private line-oriented finder. The added responsibility does not justify a `headers.py` module, `rules/` package, registry, plugin, configuration file, user-editable policy, dynamic downloads, dependency injection, inheritance hierarchy, generalized parser framework, new dependency, or new public API.
 
+Milestone 6 adds one concrete selected-sensitive-query-parameter responsibility. Keep production behavior in `src/evidence_sanitizer/sanitizer.py` with small private constants for the fixed rule ID, marker, approved parameter-name set, and one private raw query finder. The added responsibility does not justify a `query.py` module, URL parsing dependency, `rules/` package, registry, plugin, configuration file, user-editable policy, recursive parser, dependency injection, inheritance hierarchy, generalized parser framework, new dependency, or new public API.
+
 Do not create modules such as `paths.py`, `reporting.py`, `textio.py`, `engine.py`, or `rules/` merely because they might be useful later. Their creation should be justified by concrete implemented responsibilities.
 
 ## Data Flow
 
-Milestone 1 through milestone 5 data flow:
+Milestone 1 through milestone 6 data flow:
 
 1. Typer parses `sanitize INPUT --output OUTPUT [--dry-run]`.
 2. The command validates the input path, output path, and output parent directory.
@@ -44,7 +46,7 @@ Milestone 1 through milestone 5 data flow:
 5. The command reads the complete input file in memory, up to 10 MiB.
 6. The command rejects NUL bytes.
 7. The command decodes strict UTF-8 or UTF-8 with BOM.
-8. The sanitizer applies the approved Authorization-header rule set, the approved Cookie-header rule set in milestone 3 and later, and the approved selected-sensitive-header rule set in milestone 5.
+8. The sanitizer applies the approved Authorization-header rule set, the approved Cookie-header rule set in milestone 3 and later, the approved selected-sensitive-header rule set in milestone 5, and the approved selected-sensitive-query-parameter rule set in milestone 6.
 9. The sanitizer returns sanitized text plus a safe report.
 10. Dry-run mode prints the safe report and writes nothing.
 11. Normal mode creates the output path exclusively and writes the sanitized bytes.
@@ -86,7 +88,7 @@ These are public design concepts, not a requirement to create separate modules o
 
 Findings should store:
 
-- `rule_id`: stable identifier, such as `authorization.bearer`, `authorization.basic`, `authorization.other`, `cookie.value`, `cookie.header`, or `header.secret`.
+- `rule_id`: stable identifier, such as `authorization.bearer`, `authorization.basic`, `authorization.other`, `cookie.value`, `cookie.header`, `header.secret`, or `query.secret`.
 - `start`: start offset in decoded text.
 - `end`: end offset in decoded text.
 - `replacement`: deterministic replacement text.
@@ -134,6 +136,8 @@ Milestone 3 should also stay in `sanitizer.py`. The Cookie rule should add only 
 Milestone 4 should continue to stay in `sanitizer.py`. Cookie-name classification should add only small private exact-name sets, private family helpers, and a private classifier. The Cookie parser may return transient Cookie names alongside value spans so the finder can decide whether to preserve or redact each value, but names must not be stored in `Finding`, `SanitizationReport`, CLI output, or reports.
 
 Milestone 5 should continue to stay in `sanitizer.py`. Sensitive-header sanitization should add only small private constants and one private finder that reuses `_iter_physical_lines` to inspect decoded physical lines. It should reuse `Finding`, `SanitizationReport`, `apply_findings`, `sanitize_text`, existing file handling, right-to-left replacement, and overlap protection. No new public data structures or public APIs are required.
+
+Milestone 6 should continue to stay in `sanitizer.py`. Query-parameter sanitization should add only small private constants and one private raw query finder. It should reuse `Finding`, `SanitizationReport`, `_iter_physical_lines` where useful for line-boundary consistency, `apply_findings`, `sanitize_text`, existing file handling, right-to-left replacement, and overlap protection. No new public data structures or public APIs are required.
 
 ## Encoding And Newline Behavior
 
@@ -470,6 +474,75 @@ The sensitive-header finder must not match `authorization`, `cookie`, `set-cooki
 
 Reports should aggregate `header.secret` by fixed rule ID only. Reports must not include raw values, source excerpts, replacement previews, header names as dynamic identifiers, grouped header categories, or per-header identifiers.
 
+## Sensitive Query Parameter Rules
+
+Milestone 6 supports selected sensitive raw URL query parameter values in decoded text evidence. It uses one raw query scanner, not a full URL parser. The finder may match raw URL/query-like substrings in HTTP request lines, absolute URLs, relative paths with query strings, query-only tokens such as `?sig=...`, non-sensitive header values such as `Referer` and `Location`, and raw body or log lines. Full HTTP message parsing remains deferred, so exact URL-like text inside bodies or logs may be sanitized.
+
+Use small private constants in `sanitizer.py`:
+
+```python
+RULE_ID_QUERY_SECRET = "query.secret"
+REDACTION_MARKER_QUERY_SECRET = "<REDACTED:query.secret>"
+APPROVED_QUERY_REDACTION_MARKERS = frozenset((REDACTION_MARKER_QUERY_SECRET,))
+SENSITIVE_QUERY_PARAMETER_NAMES = frozenset(...)
+```
+
+Use one private raw query finder, conceptually:
+
+```python
+def _find_query_parameter_values(
+    text: str, existing_findings: Sequence[Finding]
+) -> tuple[Finding, ...]:
+    ...
+```
+
+The approved parameter-name set is fixed and exact. Matching must be case-insensitive against the raw parameter name before `=`. It must not URL-decode, URL-re-encode, normalize Unicode, parse nested URLs, classify by value, infer from value shape, or use substring matching. Percent-encoded names such as `access%5Ftoken` do not match `access_token`. `_`, `-`, and `.` remain distinct.
+
+The finder should scan decoded text for raw query candidates with these boundaries:
+
+1. Treat `?` as the start of a raw query candidate.
+2. Treat a repeated `?` inside the same query token as data, not as recursive query parsing.
+3. Support multiple separate query tokens on one line.
+4. Treat `&` and `;` as parameter separators.
+5. Treat `#` as the end of the current query segment.
+6. Treat spaces, tabs, CR, LF, quotes, apostrophes, and backticks as query-token terminators.
+7. Treat `<` and `>` as URL wrapping delimiters, preserving outer delimiters such as the trailing `>` in `<https://x.test/?sig=abc>`.
+8. Preserve every non-value byte and text segment by replacing only value spans.
+
+For each raw query candidate, the lifecycle should be:
+
+1. Split the candidate into raw parameter segments using `&` and `;` while preserving separators.
+2. For each segment, find the first `=`.
+3. If no `=` exists, skip the bare no-value parameter and produce no finding.
+4. Compare the raw name before `=` to the approved case-insensitive parameter-name set.
+5. If the name is not approved, produce no finding.
+6. Replace the complete raw value span after `=` with `<REDACTED:query.secret>`.
+7. Treat explicit empty values such as `?token=` as replaceable value spans and emit one finding.
+8. Skip exact complete raw values equal to `<REDACTED:query.secret>`.
+9. Redact embedded `<REDACTED:query.secret>` values, unapproved query marker-like values, and wrong-family markers such as `<REDACTED:header.secret>`, `<REDACTED:cookie.value>`, and `<REDACTED:authorization.bearer>`.
+
+Marker handling must be marker-aware so the approved marker's `<` and `>` do not break idempotence or query boundary detection. Repeated sanitization must produce byte-identical output.
+
+The query finder must not introduce grouped or per-parameter rule IDs such as `query.token`, `query.api_key`, `query.signature`, or `query.oauth`. Reports should aggregate counts by fixed rule ID `query.secret` only. Parameter names may remain visible in sanitized evidence for URL structure, but they must not be stored in `Finding`, `SanitizationReport`, CLI output, or reports as dynamic identifiers.
+
+Existing findings are authoritative. In `sanitize_text`, collect Authorization findings, Cookie findings, and selected sensitive-header findings first. Query findings should run after those broader finders or otherwise receive the existing finding spans and skip any candidate value span that overlaps them. `apply_findings` remains the final overlap guard. Do not introduce a generalized overlap-resolution system.
+
+Examples of overlap behavior:
+
+```http
+X-API-Key: https://x.test/?sig=abc
+```
+
+This should produce only `header.secret` because the sensitive-header finding covers the URL value.
+
+```http
+Cookie: theme=https://x.test/?sig=abc
+```
+
+This may produce `query.secret` because `theme` is an approved harmless Cookie name whose value is intentionally preserved, so no Cookie finding covers that span.
+
+Milestone 6 must not add URL parsing dependencies, `query.py`, `rules/`, configuration files, user-editable policy, registries, plugins, dependency injection, inheritance, generalized parser frameworks, recursive parsers, new public APIs, or new exit codes.
+
 ## Exclusive Output Creation Strategy
 
 Milestone 1 must require the output path not to exist. The implementation should create the output file exclusively, using a mode or flag equivalent to `x` creation so an existing destination is never overwritten.
@@ -498,9 +571,11 @@ Milestone 1 therefore documents this limitation instead of overbuilding it. An a
 - Configuration files: rejected until a concrete need exists.
 - LLM detection: rejected because MVP detection must be deterministic and explainable.
 - Comprehensive binary detection: rejected because milestone 1 only rejects NUL bytes and strict UTF-8 decoding failures.
-- Generalized overlap resolution: rejected until more than one rule exists.
+- Generalized overlap resolution: rejected unless a concrete approved requirement exceeds simple non-overlapping findings, skip-on-overlap behavior, and the existing internal overlap guard.
 - Metadata preservation: rejected because sanitized output is a new copy and cross-platform metadata preservation is not required.
 - Atomic replacement guarantee: deferred because exclusive new-file creation is sufficient for milestone 1's approved safety target.
+- URL parsing dependencies for milestone 6 query sanitization: rejected because standard parsers may decode, normalize, sort, or re-encode evidence, while the approved behavior is raw span replacement.
+- Recursive query parsing: deferred because nested URL semantics and false-positive behavior require a separate approval.
 
 ## Rules Against Speculative Abstraction
 
@@ -512,3 +587,4 @@ Milestone 1 therefore documents this limitation instead of overbuilding it. An a
 - Do not add configuration loading.
 - Do not add reporting formats until there is an approved consumer.
 - Do not add future directory-processing architecture until single-file semantics are proven.
+- Do not add URL parser frameworks or recursive parsers for milestone 6 query sanitization.
