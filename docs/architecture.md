@@ -29,11 +29,13 @@ Milestone 3 adds one concrete Cookie-header responsibility. Keep production beha
 
 Milestone 4 extends the same Cookie-header responsibility with deterministic name-only classification and very limited value preservation. Keep production behavior in `src/evidence_sanitizer/sanitizer.py` with small private classification constants and helpers. The added responsibility does not justify a `cookie.py` module, `rules/` package, configuration file, runtime-editable list, registry, plugin, dependency injection, inheritance hierarchy, generalized policy engine, regex framework, new dependency, or new public API.
 
+Milestone 5 adds one concrete selected-sensitive-header responsibility. Keep production behavior in `src/evidence_sanitizer/sanitizer.py` with small private constants for the fixed rule ID, marker, approved header-name set, and one private line-oriented finder. The added responsibility does not justify a `headers.py` module, `rules/` package, registry, plugin, configuration file, user-editable policy, dynamic downloads, dependency injection, inheritance hierarchy, generalized parser framework, new dependency, or new public API.
+
 Do not create modules such as `paths.py`, `reporting.py`, `textio.py`, `engine.py`, or `rules/` merely because they might be useful later. Their creation should be justified by concrete implemented responsibilities.
 
 ## Data Flow
 
-Milestone 1 through milestone 4 data flow:
+Milestone 1 through milestone 5 data flow:
 
 1. Typer parses `sanitize INPUT --output OUTPUT [--dry-run]`.
 2. The command validates the input path, output path, and output parent directory.
@@ -42,7 +44,7 @@ Milestone 1 through milestone 4 data flow:
 5. The command reads the complete input file in memory, up to 10 MiB.
 6. The command rejects NUL bytes.
 7. The command decodes strict UTF-8 or UTF-8 with BOM.
-8. The sanitizer applies the approved Authorization-header rule set and, in milestone 3 and milestone 4, the approved Cookie-header rule set.
+8. The sanitizer applies the approved Authorization-header rule set, the approved Cookie-header rule set in milestone 3 and later, and the approved selected-sensitive-header rule set in milestone 5.
 9. The sanitizer returns sanitized text plus a safe report.
 10. Dry-run mode prints the safe report and writes nothing.
 11. Normal mode creates the output path exclusively and writes the sanitized bytes.
@@ -84,7 +86,7 @@ These are public design concepts, not a requirement to create separate modules o
 
 Findings should store:
 
-- `rule_id`: stable identifier, such as `authorization.bearer`, `authorization.basic`, `authorization.other`, `cookie.value`, or `cookie.header`.
+- `rule_id`: stable identifier, such as `authorization.bearer`, `authorization.basic`, `authorization.other`, `cookie.value`, `cookie.header`, or `header.secret`.
 - `start`: start offset in decoded text.
 - `end`: end offset in decoded text.
 - `replacement`: deterministic replacement text.
@@ -130,6 +132,8 @@ Milestone 2 should keep Authorization-header parsing and replacement in `sanitiz
 Milestone 3 should also stay in `sanitizer.py`. The Cookie rule should add only fixed constants, a line-oriented Cookie finder, and small private parsing helpers. It should reuse `Finding`, `SanitizationReport`, `apply_findings`, existing file handling, and right-to-left replacement. No new public data structures are required.
 
 Milestone 4 should continue to stay in `sanitizer.py`. Cookie-name classification should add only small private exact-name sets, private family helpers, and a private classifier. The Cookie parser may return transient Cookie names alongside value spans so the finder can decide whether to preserve or redact each value, but names must not be stored in `Finding`, `SanitizationReport`, CLI output, or reports.
+
+Milestone 5 should continue to stay in `sanitizer.py`. Sensitive-header sanitization should add only small private constants and one private finder that reuses `_iter_physical_lines` to inspect decoded physical lines. It should reuse `Finding`, `SanitizationReport`, `apply_findings`, `sanitize_text`, existing file handling, right-to-left replacement, and overlap protection. No new public data structures or public APIs are required.
 
 ## Encoding And Newline Behavior
 
@@ -424,6 +428,47 @@ Existing approved Cookie markers remain idempotent. Category-specific marker-lik
 Whole-header fallback remains unchanged: a malformed non-empty exact non-folded Cookie header produces one `cookie.header` finding with `<REDACTED:cookie.header>` and no per-cookie classification or per-cookie findings. Folded Cookie forms remain completely unchanged. `Set-Cookie` remains out of scope. Exact line-start Cookie matching, newline preservation, BOM preservation, final-newline behavior, and formatting preservation remain unchanged.
 
 Authorization and Cookie findings remain independent and non-overlapping by construction. Milestone 4 classification must not alter Bearer, Basic, or generic Authorization matching, marker policy, counts, idempotence, or file flow.
+
+## Sensitive API/Auth Header Rules
+
+Milestone 5 supports only exact line-start selected sensitive API/authentication-related HTTP-like headers. It redacts the complete non-empty trimmed header value with one generic marker and reports one generic fixed rule ID.
+
+Use small private constants in `sanitizer.py`:
+
+```python
+RULE_ID_HEADER_SECRET = "header.secret"
+REDACTION_MARKER_HEADER_SECRET = "<REDACTED:header.secret>"
+APPROVED_HEADER_REDACTION_MARKERS = frozenset((REDACTION_MARKER_HEADER_SECRET,))
+SENSITIVE_HEADER_NAMES = frozenset(...)
+```
+
+Use one private sensitive-header finder, conceptually:
+
+```python
+def _find_sensitive_header_values(text: str) -> tuple[Finding, ...]:
+    ...
+```
+
+The finder should reuse `_iter_physical_lines` so newline detection, final-line behavior, and folded-line checks stay consistent with the Cookie finder. For each physical line, it should:
+
+1. Check whether the line starts at column 0 with one approved header name, matched case-insensitively.
+2. Require the approved name followed only by optional spaces or tabs and then `:`.
+3. Allow spaces and tabs after `:` and treat them as preserved leading formatting outside the replacement span.
+4. Determine the value span up to the physical line ending.
+5. Trim only trailing spaces and tabs from the replacement span, preserving that trailing horizontal whitespace outside the replacement.
+6. Skip empty or whitespace-only values.
+7. Skip exact complete trimmed `<REDACTED:header.secret>` values.
+8. Emit one `Finding` with rule ID `header.secret` and replacement `<REDACTED:header.secret>` for every other non-empty value.
+
+The finder must not parse, decode, classify, split, or inspect the header value beyond empty-marker checks and replacement-span calculation. Quoted, comma-separated, and structured values are redacted as one complete trimmed value. A value containing embedded `<REDACTED:header.secret>`, unapproved marker-like values, or wrong-family Authorization/Cookie markers is treated as raw and redacted.
+
+The approved header-name set is fixed and exact. No substring matching is allowed, and header names must not become dynamic rule IDs or report output. Near misses such as `monkey`, `keyboard`, `x-tokenizer-mode`, `x-author-theme`, `x-api-key-name`, `x-access-token-expires`, and `x-csrf-token-enabled` remain unchanged.
+
+Folded sensitive headers are unsupported. If an exact sensitive header line is immediately followed by a physical line beginning with a space or tab, the finder should leave the complete folded form unchanged and emit no finding. It must not sanitize only the first physical line. Full folded-header parsing remains deferred.
+
+The sensitive-header finder must not match `authorization`, `cookie`, `set-cookie`, or `proxy-authorization`. Existing Authorization and Cookie flows remain unchanged. In `sanitize_text`, collect Authorization findings, Cookie findings, and sensitive-header findings, then apply the combined finding set with the existing right-to-left replacement function. The rules are non-overlapping by construction because they match distinct exact header names. If an overlap is ever produced, keep treating it as an internal sanitization error instead of adding a generalized overlap-resolution system.
+
+Reports should aggregate `header.secret` by fixed rule ID only. Reports must not include raw values, source excerpts, replacement previews, header names as dynamic identifiers, grouped header categories, or per-header identifiers.
 
 ## Exclusive Output Creation Strategy
 
