@@ -15,6 +15,7 @@ RULE_ID_AUTHORIZATION_OTHER = "authorization.other"
 RULE_ID_COOKIE_VALUE = "cookie.value"
 RULE_ID_COOKIE_HEADER = "cookie.header"
 RULE_ID_HEADER_SECRET = "header.secret"
+RULE_ID_QUERY_SECRET = "query.secret"
 
 REDACTION_MARKER_AUTHORIZATION_BEARER = "<REDACTED:authorization.bearer>"
 REDACTION_MARKER_AUTHORIZATION_BASIC = "<REDACTED:authorization.basic>"
@@ -22,6 +23,7 @@ REDACTION_MARKER_AUTHORIZATION_CREDENTIALS = "<REDACTED:authorization.credential
 REDACTION_MARKER_COOKIE_VALUE = "<REDACTED:cookie.value>"
 REDACTION_MARKER_COOKIE_HEADER = "<REDACTED:cookie.header>"
 REDACTION_MARKER_HEADER_SECRET = "<REDACTED:header.secret>"
+REDACTION_MARKER_QUERY_SECRET = "<REDACTED:query.secret>"
 COOKIE_REDACTION_MARKER_PREFIX = "<REDACTED:cookie."
 REDACTION_MARKER = REDACTION_MARKER_AUTHORIZATION_BEARER
 APPROVED_REDACTION_MARKERS = frozenset(
@@ -37,6 +39,7 @@ APPROVED_COOKIE_REDACTION_MARKERS = frozenset(
         REDACTION_MARKER_COOKIE_HEADER,
     )
 )
+APPROVED_QUERY_REDACTION_MARKERS = frozenset((REDACTION_MARKER_QUERY_SECRET,))
 COOKIE_HEADER_NAME = "Cookie"
 HTTP_TOKEN_CHARACTERS = frozenset(
     "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -149,6 +152,32 @@ _SENSITIVE_HEADER_NAMES = frozenset(
         "client-secret",
     )
 )
+SENSITIVE_QUERY_PARAMETER_NAMES = frozenset(
+    (
+        "access_token",
+        "auth_token",
+        "id_token",
+        "jwt",
+        "refresh_token",
+        "session",
+        "session_id",
+        "sid",
+        "token",
+        "api-key",
+        "api_key",
+        "apikey",
+        "client_secret",
+        "sig",
+        "signature",
+        "x-amz-credential",
+        "x-amz-security-token",
+        "x-amz-signature",
+        "x-goog-credential",
+        "x-goog-signature",
+    )
+)
+_QUERY_TOKEN_TERMINATORS = frozenset(" \t\r\n\"'`#<>")
+_QUERY_TOKEN_BOUNDARIES = frozenset(" \t\r\n\"'`<>")
 
 EXIT_INTERNAL_ERROR = 1
 EXIT_UNSAFE_PATH = 3
@@ -362,6 +391,121 @@ def _find_sensitive_header_values(text: str) -> tuple[Finding, ...]:
                 replacement=REDACTION_MARKER_HEADER_SECRET,
             )
         )
+
+    return tuple(findings)
+
+
+def _skip_redaction_marker(text: str, position: int) -> int:
+    """Advance past a <REDACTED:...> marker so its angle brackets do not end a query."""
+    if (
+        position < len(text)
+        and text[position] == "<"
+        and text.startswith("<REDACTED:", position)
+    ):
+        marker_end = text.find(">", position)
+        if marker_end != -1:
+            return marker_end + 1
+    return position
+
+
+def _skip_to_query_token_end(text: str, position: int) -> int:
+    """Advance past the remainder of a URL fragment or terminated query token."""
+    # Begin just after the character that ended the query segment so we can
+    # consume through any fragment content before the next URL wrapping
+    # terminator or whitespace boundary. Additional '#' characters inside the
+    # fragment are fragment text, not query-segment terminators.
+    position += 1
+    while position < len(text) and text[position] not in _QUERY_TOKEN_BOUNDARIES:
+        position += 1
+        position = _skip_redaction_marker(text, position)
+    return position
+
+
+def _overlaps_existing_finding(
+    start: int, end: int, existing_findings: Sequence[Finding]
+) -> bool:
+    """Return whether a span intersects any existing finding."""
+    for finding in existing_findings:
+        if finding.end <= start:
+            continue
+        if finding.start >= end:
+            break
+        return True
+    return False
+
+
+def _find_query_parameter_values(
+    text: str, existing_findings: Sequence[Finding]
+) -> tuple[Finding, ...]:
+    """Find approved raw URL query parameter values for milestone 6."""
+    findings: list[Finding] = []
+    existing_sorted = sorted(existing_findings, key=lambda item: item.start)
+    position = 0
+
+    while position < len(text):
+        if text[position] != "?":
+            position += 1
+            continue
+
+        token_position = position + 1
+        while token_position < len(text):
+            token_position = _skip_redaction_marker(text, token_position)
+            if token_position >= len(text):
+                break
+
+            character = text[token_position]
+            if character in _QUERY_TOKEN_TERMINATORS:
+                break
+            if character == "#":
+                token_position = _skip_to_query_token_end(text, token_position)
+                break
+            if character in "&;":
+                token_position += 1
+                continue
+
+            segment_start = token_position
+            while token_position < len(text):
+                token_position = _skip_redaction_marker(text, token_position)
+                if token_position >= len(text):
+                    break
+
+                char = text[token_position]
+                if char in _QUERY_TOKEN_TERMINATORS or char in "&;#":
+                    break
+                token_position += 1
+
+            segment_end = token_position
+            equals_index = text.find("=", segment_start, segment_end)
+            if equals_index != -1:
+                name = text[segment_start:equals_index]
+                if name.lower() in SENSITIVE_QUERY_PARAMETER_NAMES:
+                    value_start = equals_index + 1
+                    value_end = segment_end
+                    if text[value_start:value_end] == REDACTION_MARKER_QUERY_SECRET:
+                        pass
+                    elif _overlaps_existing_finding(
+                        segment_start, value_end, existing_sorted
+                    ):
+                        pass
+                    else:
+                        findings.append(
+                            Finding(
+                                rule_id=RULE_ID_QUERY_SECRET,
+                                start=value_start,
+                                end=value_end,
+                                replacement=REDACTION_MARKER_QUERY_SECRET,
+                            )
+                        )
+
+            if token_position < len(text) and text[token_position] in "&;":
+                token_position += 1
+                continue
+            if token_position < len(text) and text[token_position] == "#":
+                token_position = _skip_to_query_token_end(text, token_position)
+                break
+            break
+
+        position = token_position
 
     return tuple(findings)
 
@@ -608,11 +752,13 @@ def apply_findings(text: str, findings: Sequence[Finding]) -> str:
 
 def sanitize_text(text: str) -> tuple[str, SanitizationReport]:
     """Sanitize decoded text with the approved rules."""
-    findings = (
+    existing_findings = (
         find_authorization_credentials(text)
         + find_cookie_values(text)
         + _find_sensitive_header_values(text)
     )
+    query_findings = _find_query_parameter_values(text, existing_findings)
+    findings = existing_findings + query_findings
     sanitized = apply_findings(text, findings)
     counts: dict[str, int] = {}
     for finding in findings:

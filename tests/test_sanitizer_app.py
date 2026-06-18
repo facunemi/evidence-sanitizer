@@ -19,12 +19,14 @@ from evidence_sanitizer.sanitizer import (
     REDACTION_MARKER_COOKIE_HEADER,
     REDACTION_MARKER_COOKIE_VALUE,
     REDACTION_MARKER_HEADER_SECRET,
+    REDACTION_MARKER_QUERY_SECRET,
     RULE_ID_AUTHORIZATION_BASIC,
     RULE_ID_AUTHORIZATION_BEARER,
     RULE_ID_AUTHORIZATION_OTHER,
     RULE_ID_COOKIE_HEADER,
     RULE_ID_COOKIE_VALUE,
     RULE_ID_HEADER_SECRET,
+    RULE_ID_QUERY_SECRET,
     SafeError,
     sanitize_file,
 )
@@ -37,6 +39,16 @@ COOKIE_HARMLESS_THEME_VALUE = "synthetic-cookie-theme"
 COOKIE_FALLBACK_VALUE = "synthetic-cookie-fallback"
 COOKIE_FALLBACK_THEME_VALUE = "synthetic-cookie-fallback-theme"
 HEADER_SECRET_VALUE = "synthetic-sensitive-header-value"
+QUERY_ACCESS_TOKEN = "synthetic-query-access-token"
+QUERY_REQUEST_SIG = "synthetic-query-request-sig"
+QUERY_COOKIE_SIG = "synthetic-query-cookie-sig"
+QUERY_LOCATION_TOKEN = "synthetic-query-location-token"
+QUERY_HEADER_JWT = "synthetic-query-header-jwt"
+QUERY_BODY_API_KEY = "synthetic-query-body-api-key"
+QUERY_BODY_CLIENT_SECRET = "synthetic-query-body-client-secret"
+QUERY_BODY_SIGNATURE = "synthetic-query-body-signature"
+QUERY_EMBEDDED = f"prefix{REDACTION_MARKER_QUERY_SECRET}suffix"
+QUERY_NEAR_MISS = "synthetic-query-near-miss"
 SENSITIVE_VALUES = (
     TOKEN,
     BASIC_TOKEN,
@@ -45,6 +57,15 @@ SENSITIVE_VALUES = (
     COOKIE_FALLBACK_VALUE,
     COOKIE_FALLBACK_THEME_VALUE,
     HEADER_SECRET_VALUE,
+    QUERY_ACCESS_TOKEN,
+    QUERY_REQUEST_SIG,
+    QUERY_COOKIE_SIG,
+    QUERY_LOCATION_TOKEN,
+    QUERY_HEADER_JWT,
+    QUERY_BODY_API_KEY,
+    QUERY_BODY_CLIENT_SECRET,
+    QUERY_BODY_SIGNATURE,
+    QUERY_EMBEDDED,
 )
 
 
@@ -161,6 +182,98 @@ def test_authorization_and_cookie_headers_sanitized_and_reported(
     }
     assert_sanitized_output(output_path, expected)
     assert_source_unchanged(input_path, source)
+
+
+def test_milestone_6_query_parameter_integration(tmp_path: Path) -> None:
+    input_path = tmp_path / "evidence.txt"
+    output_path = tmp_path / "evidence.sanitized.txt"
+    second_output_path = tmp_path / "evidence.sanitized-again.txt"
+    source = (
+        f"GET /oauth/callback?access_token={QUERY_ACCESS_TOKEN}"
+        "&state=keep&code=keep HTTP/1.1\n"
+        "Host: example.test\n"
+        f"Authorization: Bearer {TOKEN}\n"
+        f"Authorization: Basic {BASIC_TOKEN}\n"
+        f"Authorization: AMX {CUSTOM_CREDENTIAL}\n"
+        f"Cookie: session={COOKIE_SESSION_VALUE}; "
+        f"theme=https://app.test/?sig={QUERY_COOKIE_SIG}\n"
+        f"Cookie: broken={COOKIE_FALLBACK_VALUE}; malformed; "
+        f"theme={COOKIE_FALLBACK_THEME_VALUE}\n"
+        f"Referer: https://app.test/?signature={QUERY_REQUEST_SIG}\n"
+        f"Location: /redirect?token={QUERY_LOCATION_TOKEN}\n"
+        f"X-API-Key: https://api.test/?jwt={QUERY_HEADER_JWT}\n"
+        "Accept: application/json\n"
+        "Body: https://x.test/?"
+        f"api-key={QUERY_BODY_API_KEY}&"
+        f"client_secret={QUERY_BODY_CLIENT_SECRET}&"
+        f"signature={QUERY_BODY_SIGNATURE}\n"
+        f"?token={REDACTION_MARKER_QUERY_SECRET}\n"
+        f"?token={QUERY_EMBEDDED}\n"
+        f"?token={REDACTION_MARKER_HEADER_SECRET}\n"
+        f"?access_token_expires={QUERY_NEAR_MISS}\n"
+    ).encode()
+    expected = (
+        "GET /oauth/callback?"
+        f"access_token={REDACTION_MARKER_QUERY_SECRET}"
+        "&state=keep&code=keep HTTP/1.1\n"
+        "Host: example.test\n"
+        f"Authorization: Bearer {REDACTION_MARKER}\n"
+        f"Authorization: Basic {REDACTION_MARKER_AUTHORIZATION_BASIC}\n"
+        "Authorization: AMX "
+        f"{REDACTION_MARKER_AUTHORIZATION_CREDENTIALS}\n"
+        f"Cookie: session={REDACTION_MARKER_COOKIE_VALUE}; "
+        f"theme=https://app.test/?sig={REDACTION_MARKER_QUERY_SECRET}\n"
+        f"Cookie: {REDACTION_MARKER_COOKIE_HEADER}\n"
+        f"Referer: https://app.test/?signature={REDACTION_MARKER_QUERY_SECRET}\n"
+        f"Location: /redirect?token={REDACTION_MARKER_QUERY_SECRET}\n"
+        f"X-API-Key: {REDACTION_MARKER_HEADER_SECRET}\n"
+        "Accept: application/json\n"
+        "Body: https://x.test/?"
+        f"api-key={REDACTION_MARKER_QUERY_SECRET}&"
+        f"client_secret={REDACTION_MARKER_QUERY_SECRET}&"
+        f"signature={REDACTION_MARKER_QUERY_SECRET}\n"
+        f"?token={REDACTION_MARKER_QUERY_SECRET}\n"
+        f"?token={REDACTION_MARKER_QUERY_SECRET}\n"
+        f"?token={REDACTION_MARKER_QUERY_SECRET}\n"
+        f"?access_token_expires={QUERY_NEAR_MISS}\n"
+    ).encode()
+    input_path.write_bytes(source)
+
+    result = sanitize_file(input_path, output_path, dry_run=False)
+
+    assert result.output_written
+    assert result.report.counts_by_rule == {
+        RULE_ID_AUTHORIZATION_BEARER: 1,
+        RULE_ID_AUTHORIZATION_BASIC: 1,
+        RULE_ID_AUTHORIZATION_OTHER: 1,
+        RULE_ID_COOKIE_VALUE: 1,
+        RULE_ID_COOKIE_HEADER: 1,
+        RULE_ID_HEADER_SECRET: 1,
+        RULE_ID_QUERY_SECRET: 9,
+    }
+    assert_sanitized_output(output_path, expected)
+    assert_source_unchanged(input_path, source)
+    for name in ("access_token", "signature", "token", "api-key", "client_secret"):
+        if any(name in rule_id for rule_id in result.report.counts_by_rule):
+            pytest.fail("report included a query parameter name")
+
+    second_result = sanitize_file(output_path, second_output_path, dry_run=False)
+    assert second_result.report.counts_by_rule == {}
+    assert second_output_path.read_bytes() == output_path.read_bytes()
+
+    dry_run_output_path = tmp_path / "dry-run.sanitized.txt"
+    dry_run_result = sanitize_file(input_path, dry_run_output_path, dry_run=True)
+    assert not dry_run_result.output_written
+    assert not dry_run_output_path.exists()
+    assert dry_run_result.report.counts_by_rule == {
+        RULE_ID_AUTHORIZATION_BEARER: 1,
+        RULE_ID_AUTHORIZATION_BASIC: 1,
+        RULE_ID_AUTHORIZATION_OTHER: 1,
+        RULE_ID_COOKIE_VALUE: 1,
+        RULE_ID_COOKIE_HEADER: 1,
+        RULE_ID_HEADER_SECRET: 1,
+        RULE_ID_QUERY_SECRET: 9,
+    }
 
 
 def test_output_created_only_on_success(tmp_path: Path) -> None:
