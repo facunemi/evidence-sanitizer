@@ -1808,6 +1808,72 @@ uv run ruff format --check .
 uv run mypy src tests
 ```
 
+## Milestone 8: README + Usage Examples / Project Polish
+
+Milestone 8 makes the repository public-GitHub ready with a professional README and milestone documentation. It adds no sanitizer behavior, no production code changes, no test changes, no dependencies, and no CLI options.
+
+### Milestone 8 Scope
+
+- Create `README.md` with project description, safety model, limitations, installation, quick start, synthetic examples, golden fixture references, development commands, tentative roadmap, and responsible-use note.
+- Update `docs/milestones.md` to document Milestone 8.
+
+### Milestone 8 Non-Goals
+
+- No new sanitization rules, rule IDs, or markers.
+- No changes to production code under `src/`.
+- No changes to tests under `tests/`.
+- No changes to `docs/product-spec.md`, `docs/architecture.md`, or `docs/security-model.md`.
+- No new dependencies, configuration files, CLI options, registries, plugins, or public APIs.
+- No changelog.
+- No license file.
+- No screenshots.
+- No `docs/usage.md`.
+
+### Milestone 8 Expected Files
+
+- `README.md`
+- `docs/milestones.md`
+
+### Milestone 8 Acceptance Criteria
+
+- `README.md` exists and uses the project name `evidence-sanitizer` and Python import name `evidence_sanitizer` consistently.
+- README accurately describes current behavior and documented rule families.
+- README includes install/run commands matching the actual CLI.
+- README includes synthetic before/after examples using reserved domains.
+- README includes the current rule IDs and markers.
+- README includes safety model and explicit limitations.
+- README references golden fixtures under `tests/fixtures/golden/`.
+- README includes development commands.
+- README includes a tentative roadmap.
+- README does not claim complete secret removal or use overclaiming language.
+- `docs/milestones.md` contains a concise Milestone 8 section.
+- No production code, tests, or excluded files are modified.
+- No new dependencies are added.
+
+### Milestone 8 Verification Requirements
+
+Expected commands:
+
+```bash
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src tests
+git diff --check
+uv run evidence-sanitizer --help
+uv run evidence-sanitizer sanitize --help
+```
+
+README sanity checks:
+
+```bash
+# Should show synthetic examples and markers.
+grep -E "example\.test|synthetic-|<REDACTED:" README.md
+
+# Should not show misspelled project name.
+grep -E "evidence-sanityzer" README.md
+```
+
 ## Future Milestones
 
 Future milestones are deferred and must be approved before implementation.
