@@ -1031,6 +1031,347 @@ Milestone 6 security and privacy limitations:
 - Existing Authorization, Cookie, and sensitive-header rules remain authoritative for overlapping spans.
 - The tool does not guarantee complete detection or removal of every secret.
 
+## Milestone 9 Sensitive JSON-Like Field Sanitization
+
+Milestone 9 adds deterministic sanitization for approved sensitive JSON-like string fields in decoded text evidence. It preserves all existing Authorization, Cookie, selected sensitive-header, selected sensitive-query-parameter, file-processing, safety, encoding, newline, reporting, CLI, and exit-code behavior.
+
+Milestone 9 uses one generic fixed rule ID and marker:
+
+| Rule ID | Marker | Applies to |
+| --- | --- | --- |
+| `json.value` | `<REDACTED:json.value>` | String values for approved JSON-like field names |
+
+The generic marker keeps the marker surface small, avoids revealing the exact secret type in reports, avoids marker proliferation, preserves simple idempotence, and remains consistent with `header.secret` and `query.secret`. Field names remain visible in sanitized evidence for structure.
+
+Milestone 9 scope:
+
+- Scan decoded text for JSON-like string-key/string-value pairs only.
+- Preserve original formatting by replacing only the raw string value payload between the value's opening and closing quotes.
+- Preserve key casing, spacing around `:`, commas, braces, brackets, line endings, UTF-8 BOM state, and final-newline state.
+- Operate in full JSON documents, HTTP bodies, logs, and report snippets where JSON-like string-key/string-value pairs appear.
+- Keep one input file, one explicit output file, and complete-file in-memory processing.
+- Keep deterministic built-in behavior only.
+
+Milestone 9 must not include:
+
+- Full JSON parsing or validation.
+- JSON reserialization.
+- JSON schema support.
+- JSON object/array direct-value redaction.
+- Number, boolean, or null value redaction.
+- Recursive parsing of URLs inside JSON values.
+- Form-urlencoded parsing.
+- Multipart parsing.
+- XML parsing.
+- HTML/JavaScript parsing.
+- YAML/TOML parsing.
+- Entropy-based detection.
+- Arbitrary regex or user-defined rules.
+- Configurable rules.
+- Plugins, registries, or parser frameworks.
+- External dependencies.
+- Network behavior.
+- Telemetry.
+- LLM behavior.
+- Persistence.
+- Directory scanning.
+- New CLI options.
+- New exit codes.
+
+### Parsing Strategy
+
+Milestone 9 uses a conservative raw JSON-like scanner, not `json.loads()` or a full JSON parser. The scanner looks for patterns equivalent to:
+
+```json
+"approved_field": "string value"
+```
+
+The scanner must:
+
+- Recognize a double-quoted string key.
+- Skip optional whitespace between the closing key quote and `:`.
+- Require `:` after the key.
+- Skip optional whitespace between `:` and the opening value quote.
+- Recognize a double-quoted string value.
+- Replace only the raw string payload between the value's opening and closing quotes.
+- Preserve the surrounding quotes and all other text.
+
+The scanner should respect valid JSON string escapes such as `\"`, `\\`, `\/`, `\n`, `\t`, and `\u1234` when locating the closing value quote. It must not decode escape sequences. It must treat literal CR or LF inside a string, invalid escapes, or unterminated strings as malformed and skip that candidate rather than redacting a larger span.
+
+### Approved Field Names
+
+Approved field names are matched exactly after ASCII-only lowercase normalization. The approved set is fixed and exact. No substring, prefix, suffix, or wildcard matching is allowed. No Unicode normalization is performed. Field names are not decoded from JSON unicode escapes for matching purposes. `_`, `-`, and `.` remain distinct characters.
+
+Approved names:
+
+```text
+token
+access_token
+accessToken
+refresh_token
+refreshToken
+id_token
+idToken
+auth_token
+authToken
+jwt
+session
+session_id
+sessionId
+sid
+api_key
+apiKey
+apikey
+x_api_key
+xApiKey
+password
+passwd
+pwd
+client_secret
+clientSecret
+shared_secret
+sharedSecret
+private_key
+privateKey
+sig
+signature
+x_amz_signature
+xAmzSignature
+x_goog_signature
+xGoogSignature
+client_assertion
+clientAssertion
+saml_response
+samlResponse
+samlresponse
+```
+
+Names such as `token`, `session`, `sig`, and `signature` have known false-positive risk but are approved because they are common in API evidence and matching is exact only. Names such as `tokenizer`, `access_token_expires`, `password_policy`, `secret_name`, `signature_algorithm`, `code_verifier`, `state_name`, and `private_key_id` are near misses and must remain unchanged.
+
+### Deferred Field Names
+
+The following names are intentionally deferred to future milestones or explicit approvals:
+
+```text
+key
+secret
+code
+state
+nonce
+assertion
+sign
+signed
+expires
+expiry
+timestamp
+redirect_uri
+url
+email
+user
+user_id
+client_id
+tenant_id
+account_id
+customer_id
+csrf
+csrf_token
+xsrf
+xsrf_token
+code_verifier
+state_name
+tokenizer
+access_token_expires
+password_policy
+secret_name
+signature_algorithm
+private_key_id
+```
+
+`secret`, `code`, `state`, `nonce`, `assertion`, and `key` are context-dependent or too broad for this milestone. CSRF/XSRF fields are deferred for JSON until explicitly approved. Identifier-like fields such as `email`, `user`, `user_id`, `client_id`, `tenant_id`, `account_id`, and `customer_id` are deferred to avoid expanding scope into privacy/identifier redaction.
+
+### Matching Semantics
+
+- Field-name matching is exact and raw after ASCII-only lowercase normalization.
+- No substring, prefix, or suffix matching is approved.
+- No Unicode normalization is performed.
+- No URL decoding is performed.
+- No JSON unicode-escape decoding is performed for matching; `"access\u005Ftoken"` does not match `access_token`.
+- `_`, `-`, and `.` remain distinct.
+- No value-based classification is approved.
+- Field names must never become rule IDs or report identifiers.
+
+### Value-Type Behavior
+
+Milestone 9 redacts only JSON-like string values.
+
+Examples for a field named `token`:
+
+```json
+{
+  "token": "abc",
+  "token": 123,
+  "token": true,
+  "token": false,
+  "token": null,
+  "token": ["abc"],
+  "token": {"nested": "abc"}
+}
+```
+
+Behavior:
+
+- `"token": "abc"` is redacted.
+- `"token": 123` remains unchanged.
+- `"token": true` remains unchanged.
+- `"token": false` remains unchanged.
+- `"token": null` remains unchanged.
+- `"token": ["abc"]` remains unchanged as the direct value.
+- `"token": {"nested": "abc"}` remains unchanged as the direct value.
+- Nested approved string fields inside arrays or objects are still redacted when they appear as their own JSON-like string-key/string-value pairs.
+
+### Empty String Behavior
+
+Explicit empty JSON string values are redacted and counted once.
+
+Example:
+
+```json
+{"token": ""}
+```
+
+Expected output:
+
+```json
+{"token": "<REDACTED:json.value>"}
+```
+
+Rationale:
+
+- An empty string is an explicit value span.
+- This aligns with explicit empty query parameter values and explicit empty Cookie values.
+
+### Marker And Idempotence Policy
+
+Approved milestone 9 marker:
+
+```text
+<REDACTED:json.value>
+```
+
+Policy:
+
+- An exact JSON string value equal to `<REDACTED:json.value>` is unchanged and produces no finding.
+- An embedded `<REDACTED:json.value>` inside a larger string is treated as raw and redacted.
+- Unapproved JSON marker-like values such as `<REDACTED:json.token>` are treated as raw and redacted.
+- Wrong-family markers such as `<REDACTED:query.secret>`, `<REDACTED:header.secret>`, `<REDACTED:cookie.value>`, and `<REDACTED:authorization.bearer>` are treated as raw and redacted.
+- Repeated sanitization must produce byte-identical output.
+- The marker remains inside the existing JSON string quotes.
+
+Examples:
+
+```json
+{"token": "<REDACTED:json.value>"}
+{"token": "prefix<REDACTED:json.value>suffix"}
+{"token": "<REDACTED:query.secret>"}
+{"token": "<REDACTED:json.token>"}
+```
+
+Expected output:
+
+```json
+{"token": "<REDACTED:json.value>"}
+{"token": "<REDACTED:json.value>"}
+{"token": "<REDACTED:json.value>"}
+{"token": "<REDACTED:json.value>"}
+```
+
+### Escaping And Replacement Policy
+
+The marker contains only safe ASCII characters and no quotes or backslashes, so it can be inserted as raw string content between the existing value quotes without JSON escaping.
+
+Example:
+
+```json
+"token": "abc"
+```
+
+becomes:
+
+```json
+"token": "<REDACTED:json.value>"
+```
+
+The surrounding formatting, including whitespace and punctuation, must be preserved.
+
+### Overlap Behavior
+
+Existing Authorization, Cookie, selected sensitive-header, and selected sensitive-query-parameter findings remain authoritative. JSON findings must run after those broader finders and skip any candidate value span that overlaps an existing finding.
+
+Example:
+
+```http
+Authorization: Bearer {"access_token":"abc"}
+X-API-Key: {"token":"abc"}
+Cookie: session={"token":"abc"}
+GET /api?token={"access_token":"abc"} HTTP/1.1
+```
+
+In all of these cases, the broader existing finding covers the span and no `json.value` finding is emitted.
+
+A preserved harmless Cookie value may still receive a `json.value` finding when no Cookie finding covers that span:
+
+```http
+Cookie: theme={"token":"abc"}
+```
+
+This is approved because `theme` is an approved harmless Cookie name whose value is intentionally preserved, so no Cookie finding covers that value.
+
+A non-sensitive query or header value may also receive a `json.value` finding when no broader finding covers it:
+
+```text
+?payload={"access_token":"abc"}
+```
+
+### Reporting Semantics
+
+- `json.value` counts one finding per approved JSON-like string field value actually replaced.
+- Exact approved marker values produce no count.
+- Deferred or non-approved field names produce no count.
+- Non-string values produce no count.
+- Malformed candidates produce no count.
+- JSON findings skipped because they overlap existing findings produce no count.
+- Reports contain only fixed rule ID `json.value` and counts.
+- Reports never contain raw values, field names, JSON snippets, or replacement previews.
+
+### Milestone 9 Acceptance Criteria
+
+- Existing Authorization behavior remains unchanged.
+- Existing Cookie behavior remains unchanged.
+- Existing selected sensitive-header behavior remains unchanged.
+- Existing selected sensitive-query-parameter behavior remains unchanged.
+- Approved field names redact only JSON-like string values.
+- Deferred and near-miss field names remain unchanged.
+- Matching is exact and ASCII-lowercase based.
+- No substring, prefix, or suffix matching is approved.
+- No Unicode escape decoding for field names is performed.
+- No value-based classification is approved.
+- Empty string values are redacted with `<REDACTED:json.value>` and counted once.
+- Non-string direct values remain unchanged.
+- Formatting is preserved by replacing only the value payload between quotes.
+- Escaped strings are parsed safely enough to locate the closing quote without decoding escapes.
+- Malformed candidates are skipped rather than fallback-redacted.
+- Exact `<REDACTED:json.value>` values are idempotent.
+- Embedded `<REDACTED:json.value>` values are redacted.
+- Unapproved JSON marker-like values are redacted.
+- Wrong-family markers are redacted.
+- JSON findings overlapping Authorization, Cookie, `header.secret`, or `query.secret` findings are skipped.
+- JSON may redact inside preserved harmless Cookie values and non-sensitive query/header text when no broader finding overlaps.
+- Reports use only fixed rule ID `json.value`.
+- Reports contain no raw values, field names, JSON snippets, or replacement previews.
+- No new dependency, configuration file, module, plugin, registry, network behavior, telemetry collection, LLM behavior, persistence, full JSON parsing, JSON reserialization, directory processing, overwrite mode, or exit code is introduced.
+- Existing source immutability, output collision, dry-run, UTF-8, UTF-8 BOM, LF, CRLF, mixed-newline, final-newline, 10 MiB, NUL-byte, safe-error, and exit-code behavior remains unchanged.
+- Tests use only synthetic data.
+
 ## CLI Behavior
 
 Recommended command shape:

@@ -543,6 +543,77 @@ This may produce `query.secret` because `theme` is an approved harmless Cookie n
 
 Milestone 6 must not add URL parsing dependencies, `query.py`, `rules/`, configuration files, user-editable policy, registries, plugins, dependency injection, inheritance, generalized parser frameworks, recursive parsers, new public APIs, or new exit codes.
 
+## Sensitive JSON-Like Field Rules
+
+Milestone 9 supports selected sensitive JSON-like string fields in decoded text evidence. It uses one raw JSON-like scanner, not a full JSON parser, not `json.loads()`, and not JSON reserialization. The finder may match JSON-like string-key/string-value pairs in full JSON documents, HTTP bodies, logs, and report snippets.
+
+Use small private constants in `sanitizer.py`:
+
+```python
+RULE_ID_JSON_VALUE = "json.value"
+REDACTION_MARKER_JSON_VALUE = "<REDACTED:json.value>"
+APPROVED_JSON_REDACTION_MARKERS = frozenset((REDACTION_MARKER_JSON_VALUE,))
+SENSITIVE_JSON_FIELD_NAMES = frozenset(...)
+```
+
+Use one private raw JSON-like finder, conceptually:
+
+```python
+def _find_json_field_values(
+    text: str, existing_findings: Sequence[Finding]
+) -> tuple[Finding, ...]:
+    ...
+```
+
+The approved field-name set is fixed and exact. Matching must be case-insensitive against the raw field name after ASCII-only lowercase normalization. It must not decode JSON unicode escapes, normalize Unicode, classify by value, infer from value shape, or use substring, prefix, or suffix matching. `_`, `-`, and `.` remain distinct.
+
+The finder should scan decoded text for raw JSON-like string-key/string-value pairs with these requirements:
+
+1. Recognize a double-quoted string key.
+2. Skip optional whitespace between the closing key quote and `:`.
+3. Require `:` after the key.
+4. Skip optional whitespace between `:` and the opening value quote.
+5. Recognize a double-quoted string value and locate its closing quote deterministically.
+6. Replace only the raw string payload between the value's opening and closing quotes.
+7. Preserve the surrounding quotes, key casing, spacing around `:`, commas, braces, brackets, line endings, UTF-8 BOM state, and final-newline state.
+8. Treat literal CR or LF inside a string, invalid escapes, unterminated strings, or other malformed syntax as unsupported and skip that candidate without fallback redaction.
+
+The scanner should respect valid JSON string escapes such as `\"`, `\\`, `\/`, `\n`, `\t`, and `\u1234` only for the purpose of locating the closing quote. It must not decode escape sequences for matching or replacement. It must not recursively parse arrays, objects, numbers, booleans, or null.
+
+For each raw JSON-like candidate, the lifecycle should be:
+
+1. Parse the key string and extract the raw key payload.
+2. Normalize the key payload by ASCII-only lowercase for matching.
+3. Compare the normalized key to the approved case-insensitive field-name set.
+4. If the key is not approved, skip the candidate.
+5. Parse the value string and locate the raw value payload span.
+6. If the value is malformed, skip the candidate.
+7. If the complete raw value payload is exactly `<REDACTED:json.value>`, skip it.
+8. If the candidate value span overlaps any existing finding, skip it.
+9. Emit one `Finding` with rule ID `json.value` and replacement `<REDACTED:json.value>`.
+
+Marker handling must preserve idempotence. The approved marker is `<REDACTED:json.value>`. Embedded markers, unapproved JSON marker-like values, and wrong-family markers are treated as raw and redacted. Repeated sanitization must produce byte-identical output.
+
+The JSON finder must not introduce grouped or per-field rule IDs such as `json.token`, `json.password`, `json.api_key`, or `json.secret`. Reports should aggregate counts by fixed rule ID `json.value` only. Field names may remain visible in sanitized evidence for structure, but they must not be stored in `Finding`, `SanitizationReport`, CLI output, or reports as dynamic identifiers.
+
+Existing findings are authoritative. In `sanitize_text`, collect Authorization findings, Cookie findings, selected sensitive-header findings, and selected sensitive-query-parameter findings first. JSON findings should run after those broader finders or otherwise receive the existing finding spans and skip any candidate value span that overlaps them. `apply_findings` remains the final overlap guard. Do not introduce a generalized overlap-resolution system.
+
+Examples of overlap behavior:
+
+```http
+X-API-Key: {"token":"abc"}
+```
+
+This should produce only `header.secret` because the sensitive-header finding covers the JSON value.
+
+```http
+Cookie: theme={"token":"abc"}
+```
+
+This may produce `json.value` because `theme` is an approved harmless Cookie name whose value is intentionally preserved, so no Cookie finding covers that span.
+
+Milestone 9 must not add JSON parsing dependencies, `json.py`, `rules/`, configuration files, user-editable policy, registries, plugins, dependency injection, inheritance, generalized parser frameworks, recursive parsers, new public APIs, or new exit codes.
+
 ## Exclusive Output Creation Strategy
 
 Milestone 1 must require the output path not to exist. The implementation should create the output file exclusively, using a mode or flag equivalent to `x` creation so an existing destination is never overwritten.

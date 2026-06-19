@@ -3,7 +3,7 @@
 ## Protected Assets
 
 - Original evidence files.
-- Detected sensitive values, including Bearer tokens, Basic credentials, custom or structured Authorization credentials, Cookie values, selected sensitive API/authentication-related header values, selected sensitive URL query parameter values, and future supported secret types.
+- Detected sensitive values, including Bearer tokens, Basic credentials, custom or structured Authorization credentials, Cookie values, selected sensitive API/authentication-related header values, selected sensitive URL query parameter values, selected sensitive JSON-like string field values, and future supported secret types.
 - Sanitized output integrity.
 - User trust that reported findings do not leak secret contents.
 - Local filesystem state at source and destination paths.
@@ -41,6 +41,7 @@
 - Milestone 4 Cookie classification must use only deterministic Cookie-name rules and must not inspect, decode, parse, infer from, or classify using Cookie values.
 - Reports for selected sensitive-header findings must use only fixed rule identifier `header.secret` and must not derive rule identifiers from header names, header groups, or detected values.
 - Reports for selected query-parameter findings must use only fixed rule identifier `query.secret` and must not derive rule identifiers from parameter names, parameter groups, or detected values.
+- Reports for selected JSON-like field findings must use only fixed rule identifier `json.value` and must not derive rule identifiers from field names, field groups, or detected values.
 - The tool must not perform network calls or telemetry.
 - The first implementation must not use LLM detection.
 - Tests must use synthetic data only.
@@ -72,6 +73,8 @@ Safe output must not include:
 - Selected sensitive-header names as dynamic report identifiers.
 - Selected query parameter values or source excerpts.
 - Selected query parameter names as dynamic report identifiers.
+- Selected JSON-like field values or source excerpts.
+- Selected JSON-like field names as dynamic report identifiers.
 
 Sensitive values must not be accepted as command-line arguments. CLI arguments should be limited to paths and flags so secrets are not encouraged to appear in shell history or process listings.
 
@@ -181,7 +184,9 @@ Milestone 5 intentionally defers IP and client identity headers such as `x-forwa
 
 Milestone 6 expands only to selected sensitive raw URL query parameter values in decoded text evidence. It supports an approved fixed list of exact raw parameter names and replaces raw values after `=` with `<REDACTED:query.secret>`. It does not URL-decode, URL-re-encode, recursively parse URL-valued parameters, parse JSON, parse XML, parse structured form bodies, parse multipart bodies, parse HTML, parse JavaScript, use value-based classification, use substring parameter matching, use grouped rule IDs, use per-parameter rule IDs, use dynamic report IDs, add user configuration, add plugins, add registries, add new dependencies, or add new exit codes.
 
-Milestone 6 selected query parameters may contain OAuth/OIDC-style access, refresh, ID, and auth tokens; session identifiers; JWTs; API keys; client secrets; signed URL signatures; and cloud temporary-access parameters. `sig` and `signature` are often highly sensitive in signed URLs and callback flows. Cloud signature parameters such as `x-amz-signature`, `x-amz-security-token`, and `x-amz-credential` can authorize temporary access. API key parameters can authenticate requests.
+Milestone 9 expands only to selected sensitive JSON-like string fields in decoded text evidence. It supports an approved fixed list of exact JSON-like field names and replaces only the raw string value payload between quotes with `<REDACTED:json.value>`. It does not perform full JSON parsing, JSON validation, JSON reserialization, JSON schema checking, unicode-escape decoding for field names, recursive parsing of nested values, value-based classification, substring field-name matching, grouped rule IDs, per-field rule IDs, dynamic report IDs, user configuration, plugins, registries, new dependencies, or new exit codes.
+
+Milestone 9 selected JSON-like fields may contain OAuth/OIDC-style access, refresh, ID, and auth tokens; session identifiers; JWTs; API keys; client secrets; shared secrets; private keys; signatures; SAML responses; and client assertions. Broad approved exact names such as `token`, `session`, `sig`, and `signature` may produce false positives, but they are explicitly approved because they are common in API evidence. `sig` and `signature` are often highly sensitive in signed URLs and callback flows. Cloud signature parameters such as `x-amz-signature`, `x-amz-security-token`, and `x-amz-credential` can authorize temporary access. API key parameters can authenticate requests.
 
 Milestone 6 intentionally defers broad names such as `key`, `code`, `state`, `nonce`, `secret`, `sign`, and `signed` to avoid broad false positives. Short cloud/SAS names such as `se`, `sp`, `sv`, `sr`, and `st` are deferred until a dedicated signed-URL context is approved. Tracking identifiers such as `utm_source`, `gclid`, `fbclid`, `msclkid`, and `_ga` are privacy or telemetry identifiers and belong in a separate milestone. Password and SAML/form-like parameter names are deferred until body/form parsing scope is addressed or explicitly approved.
 
@@ -206,6 +211,8 @@ Milestone 3 Cookie parsing should use a bounded line detector plus a determinist
 Milestone 5 selected sensitive-header detection should use the existing physical-line iteration plus exact header-name checks. A broad regex or substring search is not required. Performance tests are required only if the chosen implementation creates realistic risk.
 
 Milestone 6 selected query-parameter detection should use a small deterministic raw query scanner. A full URL parser, recursive parser, broad regex, substring search, URL-decoding pass, or URL-re-encoding pass is not required. Performance tests are required only if the chosen implementation creates realistic risk, such as unbounded scanning or catastrophic backtracking.
+
+Milestone 9 selected JSON-like field detection should use a small deterministic raw JSON-like scanner. A full JSON parser, JSON reserialization, JSON schema validation, broad regex, substring search, or unicode-escape decoding pass is not required. Performance tests are required only if the chosen implementation creates realistic risk, such as unbounded scanning or catastrophic backtracking.
 
 Regex is not the only approved parsing mechanism. Future structured formats may require parsers or purpose-built scanners instead of broad regular expressions.
 
@@ -232,6 +239,10 @@ Milestone 5 uses only rule ID `header.secret` and marker `<REDACTED:header.secre
 Milestone 6 uses only rule ID `query.secret` and marker `<REDACTED:query.secret>`. If the complete raw selected query parameter value is exactly `<REDACTED:query.secret>`, the value is already sanitized and produces no finding or count. Marker handling must be marker-aware so the approved marker's `<` and `>` do not break idempotence or query boundary detection. A marker embedded inside a larger raw query value is not already sanitized and must be redacted. Unapproved query marker-like values and wrong-family Authorization, Cookie, or sensitive-header markers inside selected query parameter values are treated as raw and redacted. Replacement-marker collisions are accepted and handled deterministically. Do not introduce a generalized marker framework.
 
 Existing Authorization, Cookie, and selected sensitive-header findings are authoritative in milestone 6. Query findings that overlap existing findings must be skipped and produce no `query.secret` count. `apply_findings` remains the final overlap guard. A preserved harmless Cookie value may still receive a `query.secret` finding when no Cookie finding overlaps because harmless Cookie values are intentionally preserved.
+
+Milestone 9 uses only rule ID `json.value` and marker `<REDACTED:json.value>`. If the complete raw JSON-like string value payload is exactly `<REDACTED:json.value>`, the value is already sanitized and produces no finding or count. A marker embedded inside a larger raw string value is not already sanitized and must be redacted. Unapproved JSON marker-like values and wrong-family Authorization, Cookie, sensitive-header, or query markers inside selected JSON-like field values are treated as raw and redacted. Replacement-marker collisions are accepted and handled deterministically. Do not introduce a generalized marker framework.
+
+Existing Authorization, Cookie, selected sensitive-header, and selected sensitive-query-parameter findings are authoritative in milestone 9. JSON findings that overlap existing findings must be skipped and produce no `json.value` count. `apply_findings` remains the final overlap guard. A preserved harmless Cookie value may still receive a `json.value` finding when no Cookie finding overlaps because harmless Cookie values are intentionally preserved. A non-sensitive query or header value may also receive a `json.value` finding when no broader finding overlaps.
 
 ## Dry-Run Behavior
 
@@ -275,7 +286,16 @@ Directory processing is deferred. Future directory mode must define partial-fail
 - Milestone 6 marker collisions are accepted and handled deterministically.
 - Existing Authorization, Cookie, and selected sensitive-header findings remain authoritative for overlapping spans.
 - IP/client identity headers, identifier headers, broad query names, short SAS names, tracking parameters, password-like query names, and SAML/form-like query names remain deferred to future milestones or approvals.
-- `Proxy-Authorization`, `Set-Cookie`, JSON bodies, XML bodies, form bodies as structured form data, multipart bodies, HTML, JavaScript, and unsupported body parsing remain out of scope.
+- `Proxy-Authorization`, `Set-Cookie`, XML bodies, form bodies as structured form data, multipart bodies, HTML, JavaScript, and unsupported body parsing remain out of scope.
+- Milestone 9 does not guarantee detection of every sensitive JSON-like field or every possible secret.
+- Milestone 9 may sanitize JSON-like string-key/string-value pairs inside prose, logs, or snippets because full JSON parsing remains deferred.
+- Milestone 9 does not decode JSON unicode-escape field names, so names such as `"access\u005Ftoken"` remain unsupported and may retain sensitive values.
+- Milestone 9 does not recursively parse URL-valued JSON string values, so nested sensitive values may remain raw.
+- Milestone 9 does not redact non-string direct values such as numbers, booleans, null, arrays, or objects.
+- Deferred JSON field names such as `key`, `secret`, `code`, `state`, `nonce`, `assertion`, CSRF/XSRF fields, and identifier-like fields may retain secrets.
+- Broad approved exact names such as `token`, `session`, `sig`, and `signature` may produce false positives.
+- Malformed JSON-like candidates may be skipped and may retain secrets.
+- Existing Authorization, Cookie, selected sensitive-header, and selected sensitive-query-parameter findings remain authoritative for overlapping spans.
 
 ## Explicitly Unsupported Adversarial Filesystem Scenarios
 
