@@ -1,0 +1,6 @@
+This marker stays: <REDACTED:authorization.bearer>
+Authorization: Bearer synthetic-bearer-token
+X-API-Key: <REDACTED:authorization.bearer>
+Cookie: theme=https://callback.example.test/?sig=synthetic-signature
+Cookie: malformed without equals
+?token=<REDACTED:query.secret>&token=synthetic-token&state=synthetic-state

@@ -1,0 +1,4 @@
+2024-01-15T09:23:17Z 200 req_abc123 GET https://api.example.test/v1/data?x-amz-signature=<REDACTED:query.secret>&access_token_expires=999&timestamp=1705310597
+2024-01-15T09:23:18Z 401 req_def456 POST https://api.example.test/v1/auth
+Authorization: Signature <REDACTED:authorization.credentials>
+2024-01-15T09:23:19Z 200 req_ghi789 GET https://api.example.test/v1/search?api_key=<REDACTED:query.secret>&signature_algorithm=sha256

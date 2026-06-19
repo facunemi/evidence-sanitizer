@@ -1,0 +1,6 @@
+GET /api/profile?access_token=<REDACTED:query.secret>&sig=<REDACTED:query.secret>&api_key=<REDACTED:query.secret>&theme=dark HTTP/1.1
+Host: example.test
+Authorization: Bearer <REDACTED:authorization.bearer>
+X-API-Key: <REDACTED:header.secret>
+Cookie: session=<REDACTED:cookie.value>; _ga=<REDACTED:cookie.value>; theme=light; unknown=<REDACTED:cookie.value>
+Accept: application/json

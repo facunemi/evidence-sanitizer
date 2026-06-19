@@ -1,0 +1,6 @@
+This marker stays: <REDACTED:authorization.bearer>
+Authorization: Bearer <REDACTED:authorization.bearer>
+X-API-Key: <REDACTED:header.secret>
+Cookie: theme=https://callback.example.test/?sig=<REDACTED:query.secret>
+Cookie: <REDACTED:cookie.header>
+?token=<REDACTED:query.secret>&token=<REDACTED:query.secret>&state=synthetic-state

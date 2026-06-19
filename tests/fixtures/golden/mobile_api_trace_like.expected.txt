@@ -1,0 +1,8 @@
+-- Mobile API trace for mobile.example.test --
+GET /v2/user?access_token=<REDACTED:query.secret> HTTP/1.1
+Host: mobile.example.test
+Authorization: Bearer <REDACTED:authorization.bearer>
+X-Auth-Token: <REDACTED:header.secret>
+Cookie: session=<REDACTED:cookie.value>; _ga=<REDACTED:cookie.value>; device=<REDACTED:cookie.value>
+User-Agent: SyntheticApp/1.0 (Android 14; Pixel 7)
+X-Request-ID: synthetic-request-id

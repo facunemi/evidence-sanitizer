@@ -1,0 +1,11 @@
+POST /admin?signature=<REDACTED:query.secret> HTTP/1.1
+Host: callback.example.test
+Authorization: Basic <REDACTED:authorization.basic>
+X-CSRF-Token: <REDACTED:header.secret>
+Cookie: <REDACTED:cookie.header>
+# The folded Cookie form below is intentionally left unchanged by design.
+Cookie: folded-test=synthetic-folded-cookie-value
+	folded-continuation=value
+Content-Type: application/x-www-form-urlencoded
+Set-Cookie: session=synthetic-set-cookie-value; Path=/
+Accept: */*

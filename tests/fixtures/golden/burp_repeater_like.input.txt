@@ -1,0 +1,11 @@
+POST /admin?signature=synthetic-signature HTTP/1.1
+Host: callback.example.test
+Authorization: Basic synthetic-basic-token
+X-CSRF-Token: synthetic-csrf-token
+Cookie: session=synthetic-session-cookie; malformed-raw
+# The folded Cookie form below is intentionally left unchanged by design.
+Cookie: folded-test=synthetic-folded-cookie-value
+	folded-continuation=value
+Content-Type: application/x-www-form-urlencoded
+Set-Cookie: session=synthetic-set-cookie-value; Path=/
+Accept: */*

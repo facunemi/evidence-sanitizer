@@ -1,0 +1,6 @@
+GET /api/profile?access_token=synthetic-access-token&sig=synthetic-signature&api_key=synthetic-api-key&theme=dark HTTP/1.1
+Host: example.test
+Authorization: Bearer synthetic-bearer-token
+X-API-Key: synthetic-api-key
+Cookie: session=synthetic-session-cookie; _ga=synthetic-telemetry-id; theme=light; unknown=synthetic-unknown-value
+Accept: application/json

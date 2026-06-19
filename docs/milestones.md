@@ -1749,6 +1749,65 @@ Required application and CLI test coverage:
 - Existing exit-code behavior remains unchanged.
 - Console-script and module entry points remain consistent.
 
+## Milestone 7: Golden Fixtures / Synthetic Evidence Corpus
+
+Milestone 7 adds synthetic golden fixtures and end-to-end tests that exercise the existing sanitization rules through Milestone 6. It does not add new sanitizer behavior, redesign the sanitizer, or introduce new rules, markers, dependencies, configuration files, or CLI options.
+
+### Milestone 7 Scope
+
+- Add a small corpus of synthetic evidence fixtures under `tests/fixtures/golden/`.
+- Pair each fixture as `<name>.input.txt` and `<name>.expected.txt`.
+- Add `tests/test_golden_fixtures.py` that parametrizes over the fixture names.
+- Tests compare actual sanitized output to the expected output, assert exact rule counts, assert idempotence, assert no synthetic raw secret values remain in output, assert report rule IDs are only known fixed rule IDs, and assert outputs contain only approved markers.
+- Update `docs/milestones.md` to document the milestone.
+
+### Milestone 7 Fixture Set
+
+1. `http_request_mixed` — realistic raw HTTP request covering Bearer Authorization, sensitive Cookie values, a sensitive header, and multiple query secrets.
+2. `burp_repeater_like` — proxy/repeater-style request covering Basic Authorization, Cookie header fallback, a CSRF token header, query signature, and folded Cookie forms left unchanged.
+3. `api_log_mixed` — line-oriented API gateway log excerpt covering generic Authorization credentials, cloud query signatures, API key query parameters, and deferred near-miss parameters.
+4. `mobile_api_trace_like` — mobile/debug trace covering Bearer Authorization, an auth token header, Cookie values, and an access token query parameter.
+5. `report_note_mixed` — human-written pentest notes mixing prose and snippets, covering multiple rule families, already-redacted approved markers, and deferred query parameters.
+6. `edge_cases_markers_and_malformed_cookie` — idempotence and edge behavior covering approved markers, wrong-family markers inside sensitive headers, malformed Cookie fallback, query secrets inside preserved harmless Cookie values, and fragment/query boundary behavior.
+
+### Milestone 7 Non-Goals
+
+- No new sanitization rules or rule IDs.
+- No new redaction markers.
+- No changes to existing production code under `src/`.
+- No changes to `docs/product-spec.md`, `docs/architecture.md`, or `docs/security-model.md`.
+- No new dependencies, configuration files, CLI options, registries, plugins, or public APIs.
+- No real client names, domains, IP addresses, emails, customer IDs, tokens, cookies, screenshots, binary files, or copied evidence.
+
+### Milestone 7 Synthetic Data Policy
+
+All fixture data is synthetic and portfolio-safe. Reserved domains such as `example.test`, `api.example.test`, `mobile.example.test`, and `callback.example.test` are used. Secret values use obvious fake placeholders such as `synthetic-bearer-token`, `synthetic-basic-token`, `synthetic-api-key`, `synthetic-auth-token`, `synthetic-csrf-token`, `synthetic-session-cookie`, and `synthetic-signature`.
+
+### Milestone 7 Acceptance Criteria
+
+- `tests/fixtures/golden/` contains the six input/expected fixture pairs.
+- `tests/test_golden_fixtures.py` passes for all fixtures.
+- Exact rule counts are asserted for every fixture.
+- Golden outputs are idempotent on repeated sanitization.
+- Synthetic raw secret values do not remain in sanitized outputs.
+- All currently implemented rule families are covered across fixtures.
+- At least one cross-rule overlap case is covered.
+- Only synthetic values and reserved domains are used.
+- No production code changes are made.
+- No new dependencies, config files, or CLI options are added.
+
+### Milestone 7 Verification Requirements
+
+Expected commands:
+
+```bash
+uv run pytest tests/test_golden_fixtures.py
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src tests
+```
+
 ## Future Milestones
 
 Future milestones are deferred and must be approved before implementation.

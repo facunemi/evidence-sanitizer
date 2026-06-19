@@ -1,0 +1,10 @@
+During the assessment we observed the following request:
+
+GET /oauth/callback?code=synthetic-auth-code&state=synthetic-state-value&token=synthetic-query-token HTTP/1.1
+Host: callback.example.test
+Authorization: Bearer synthetic-bearer-token
+Cookie: session=<REDACTED:cookie.value>; theme=dark
+X-API-Key: synthetic-api-key
+
+The token parameter above is interesting. Also note:
+https://example.test/?sig=<REDACTED:query.secret>&signature=synthetic-signature
