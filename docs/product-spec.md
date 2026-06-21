@@ -1372,6 +1372,400 @@ A non-sensitive query or header value may also receive a `json.value` finding wh
 - Existing source immutability, output collision, dry-run, UTF-8, UTF-8 BOM, LF, CRLF, mixed-newline, final-newline, 10 MiB, NUL-byte, safe-error, and exit-code behavior remains unchanged.
 - Tests use only synthetic data.
 
+## Milestone 10 Sensitive Form-URL-Encoded Field Sanitization
+
+Milestone 10 adds deterministic sanitization for approved sensitive `application/x-www-form-urlencoded` field values in HTTP-like evidence. It preserves all existing Authorization, Cookie, selected sensitive-header, selected sensitive-query-parameter, selected sensitive JSON-like field, file-processing, safety, encoding, newline, reporting, CLI, and exit-code behavior.
+
+Milestone 10 uses one generic fixed rule ID and marker:
+
+| Rule ID | Marker | Applies to |
+| --- | --- | --- |
+| `form.value` | `<REDACTED:form.value>` | Raw values for approved sensitive form-urlencoded field names |
+
+The generic marker keeps the marker surface small, avoids revealing the exact secret type in reports, avoids marker proliferation, preserves simple idempotence, and remains consistent with `header.secret`, `query.secret`, and `json.value`. Field names remain visible in sanitized evidence for structure.
+
+Milestone 10 scope:
+
+- Scan decoded text for HTTP-like `Content-Type: application/x-www-form-urlencoded` header lines.
+- Support optional media-type parameters such as `; charset=utf-8`.
+- Scan only the immediate first physical line after the blank header/body separator.
+- Replace only the raw value span after `=` for approved field names.
+- Preserve field name casing, spacing around `=`, `&` separators, field order, repeated fields, line endings, UTF-8 BOM state, and final-newline state.
+- Operate in HTTP request bodies and raw evidence snippets where a supported Content-Type line precedes a supported body line.
+- Keep one input file, one explicit output file, and complete-file in-memory processing.
+- Keep deterministic built-in behavior only.
+
+Milestone 10 must not include:
+
+- Full HTTP message parsing.
+- Request/response boundary parsing.
+- `Content-Length`-based body parsing.
+- Chunked-transfer decoding.
+- Multi-line or wrapped form body parsing.
+- Raw form-urlencoded scanning without a supported Content-Type line.
+- Form data in arbitrary prose.
+- Multipart parsing.
+- JSON parsing changes.
+- XML parsing.
+- HTML/JavaScript parsing.
+- YAML/TOML parsing.
+- Recursive URL parsing inside form values.
+- URL decoding or re-encoding.
+- Percent-decoding of names or values.
+- Plus-decoding of names or values.
+- Semantic OAuth flow validation.
+- Entropy-based detection.
+- Arbitrary regex or user-defined rules.
+- Configurable rules.
+- Plugins, registries, or parser frameworks.
+- External dependencies.
+- Network behavior.
+- Telemetry.
+- LLM behavior.
+- Persistence.
+- Directory scanning.
+- New CLI options.
+- New exit codes.
+
+### Parsing Strategy
+
+Milestone 10 uses a conservative Content-Type-gated form-urlencoded scanner, not a full HTTP parser.
+
+The scanner must:
+
+- Match `Content-Type` case-insensitively at the start of a decoded physical line.
+- Allow spaces and tabs between `Content-Type` and `:`.
+- Allow spaces and tabs after `:`.
+- Require the media type `application/x-www-form-urlencoded` after optional whitespace.
+- Allow optional media-type parameters such as `; charset=utf-8` after the media type.
+- Locate the immediate first physical line after the blank header/body separator line following the matched Content-Type line.
+- Treat that single physical line as the form body candidate, even if it is blank.
+- Split the candidate into raw `name=value` segments using `&` as the only separator.
+- Preserve every non-value byte.
+
+A blank header/body separator line is a physical line whose content is empty after removing its line ending. The form body candidate is the immediate first physical line after the separator. If that line is blank, no form body is scanned. If no separator line exists after the Content-Type line, no form body is scanned.
+
+### Approved Field Names
+
+Approved field names are matched exactly after ASCII-only lowercase normalization. The approved set is fixed and exact. No substring, prefix, suffix, or wildcard matching is allowed. No Unicode normalization is performed. Field names are not decoded from percent escapes or plus signs for matching purposes. `_`, `-`, and `.` remain distinct characters.
+
+Approved names:
+
+```text
+access_token
+accessToken
+auth_token
+authToken
+id_token
+idToken
+jwt
+refresh_token
+refreshToken
+session
+session_id
+sessionId
+sid
+token
+api-key
+api_key
+apiKey
+apikey
+x_api_key
+xApiKey
+client_secret
+clientSecret
+shared_secret
+sharedSecret
+private_key
+privateKey
+password
+passwd
+pwd
+client_assertion
+clientAssertion
+saml_response
+samlResponse
+samlresponse
+sig
+signature
+x-amz-credential
+x-amz-security-token
+x-amz-signature
+x-goog-credential
+x-goog-signature
+x_amz_signature
+xAmzSignature
+x_goog_signature
+xGoogSignature
+csrf
+csrf_token
+xsrf
+xsrf_token
+```
+
+CSRF/XSRF fields are approved for form-urlencoded bodies because anti-CSRF tokens commonly appear as form field values. Names such as `token`, `session`, `sig`, and `signature` have known false-positive risk but are approved because matching is Content-Type-gated and exact-name-only. Names such as `password_policy`, `access_token_expires`, `client_secret_name`, `tokenizer`, `state_name`, `code_challenge`, and `code_challenge_method` are near misses and must remain unchanged.
+
+### Deferred Field Names
+
+The following names are intentionally deferred to future milestones or explicit approvals:
+
+```text
+key
+secret
+code
+state
+nonce
+assertion
+sign
+signed
+expires
+expiry
+timestamp
+redirect_uri
+url
+email
+user
+user_id
+username
+client_id
+tenant_id
+account_id
+customer_id
+grant_type
+scope
+otp
+mfa_code
+se
+sp
+sv
+sr
+st
+utm_source
+gclid
+fbclid
+```
+
+`code`, `state`, and `nonce` are context-dependent OAuth fields and are deferred. `username`, `email`, `user`, and identifier-like fields are deferred to avoid expanding privacy/PII scope. `grant_type` and `scope` are OAuth metadata rather than secrets by default and are deferred. `otp` and `mfa_code` can be sensitive but require explicit future approval. `secret` and `key` are too broad for this milestone. Short SAS-style names such as `se`, `sp`, `sv`, `sr`, and `st` are deferred.
+
+### Matching Semantics
+
+- Field-name matching is exact and raw after ASCII-only lowercase normalization.
+- No substring, prefix, or suffix matching is approved.
+- No Unicode normalization is performed.
+- No URL decoding is performed.
+- No percent-decoding is performed; `access%5Ftoken` does not match `access_token`.
+- No plus-decoding is performed.
+- `_`, `-`, and `.` remain distinct.
+- No value-based classification is approved.
+- Field names must never become rule IDs or report identifiers.
+
+### Value Behavior
+
+Milestone 10 redacts only raw form field values for approved names.
+
+- For a matched field with `=`, replace only the complete raw value span after `=`.
+- Preserve field name casing.
+- Preserve `=`.
+- Preserve `&` separators.
+- Preserve field order and repeated fields.
+- Preserve percent-encoding and plus signs in non-redacted values.
+- Do not redact non-approved fields.
+- Do not decode nested URLs inside values.
+
+Examples:
+
+```text
+access_token=abc
+access_token=
+access_token
+access_token=a=b=c
+access_token=abc&theme=dark
+```
+
+Expected output:
+
+```text
+access_token=<REDACTED:form.value>
+access_token=<REDACTED:form.value>
+access_token
+access_token=<REDACTED:form.value>
+access_token=<REDACTED:form.value>&theme=dark
+```
+
+Explicit empty values are intentional sensitive fields and are normalized to the marker. They count once.
+
+Bare no-value parameters such as `access_token` remain unchanged and produce no count because there is no value span to replace without changing structure.
+
+### Separator Behavior
+
+Milestone 10 supports `&` as the only form field separator. Semicolon-separated form fields are deferred.
+
+```text
+access_token=abc;theme=dark
+```
+
+For M10, if this appears in a supported form body line, it is treated as one raw value for `access_token` ending at the line boundary, because `;` is not a recognized form separator. Otherwise it follows the scanner's documented raw value boundary behavior.
+
+### Encoding Policy
+
+Milestone 10 preserves raw decoded text.
+
+- Do not percent-decode names.
+- Do not percent-decode values.
+- Do not plus-decode names.
+- Do not plus-decode values.
+- Match raw names only.
+- Redact raw value spans without decoding.
+- Preserve `%XX` and `+` in non-redacted values.
+- Do not re-encode anything.
+
+Examples:
+
+```text
+access_token=synthetic%2Dtoken
+access%5Ftoken=synthetic-token
+password=hello+world
+```
+
+Expected policy:
+
+- `access_token=synthetic%2Dtoken` redacts because the raw name matches.
+- `access%5Ftoken=synthetic-token` does not match `access_token` because the name is not percent-decoded.
+- `password=hello+world` redacts the raw value `hello+world` without decoding the plus signs.
+
+### Marker And Idempotence Policy
+
+Approved milestone 10 marker:
+
+```text
+<REDACTED:form.value>
+```
+
+Policy:
+
+- An exact complete form field value equal to `<REDACTED:form.value>` is unchanged and produces no finding.
+- An embedded `<REDACTED:form.value>` inside a larger value is treated as raw and redacted.
+- Unapproved form marker-like values such as `<REDACTED:form.token>` are treated as raw and redacted.
+- Wrong-family markers such as `<REDACTED:query.secret>`, `<REDACTED:header.secret>`, `<REDACTED:cookie.value>`, `<REDACTED:authorization.bearer>`, and `<REDACTED:json.value>` are treated as raw and redacted.
+- Repeated sanitization must produce byte-identical output.
+
+Examples:
+
+```text
+access_token=<REDACTED:form.value>
+access_token=prefix<REDACTED:form.value>suffix
+access_token=<REDACTED:query.secret>
+access_token=<REDACTED:form.token>
+```
+
+Expected output:
+
+```text
+access_token=<REDACTED:form.value>
+access_token=<REDACTED:form.value>
+access_token=<REDACTED:form.value>
+access_token=<REDACTED:form.value>
+```
+
+### Overlap Behavior And Ordering
+
+The final sanitizer ordering is:
+
+1. Authorization findings.
+2. Cookie findings.
+3. Sensitive-header findings.
+4. Form-urlencoded findings.
+5. Query findings.
+6. JSON findings.
+
+Rationale:
+
+- Authorization, Cookie, and sensitive headers are broader line/header findings and remain authoritative.
+- Form-urlencoded body values are broader than nested query or JSON-like content inside the same form value.
+- Query and JSON may still run inside non-sensitive form fields when no form finding overlaps.
+
+Examples:
+
+```http
+GET /api?access_token=abc HTTP/1.1
+```
+
+This produces only `query.secret`, not `form.value`, because M10 is Content-Type-gated and query scanning remains responsible for URL query parameters.
+
+```http
+Content-Type: application/x-www-form-urlencoded
+
+redirect_uri=https://callback.example.test/cb?access_token=synthetic-token&client_secret=synthetic-client-secret
+```
+
+Form does not redact `redirect_uri` because it is deferred. Query may redact nested `access_token` and `client_secret` if current query rules support those raw query names and no form finding overlaps.
+
+```http
+Content-Type: application/x-www-form-urlencoded
+
+access_token=https://api.example.test/cb?token=synthetic-token
+```
+
+`form.value` redacts the whole `access_token` value, and query or JSON findings inside that value are skipped due to overlap.
+
+```http
+Authorization: Bearer access_token=abc
+X-API-Key: access_token=abc
+```
+
+Authorization and sensitive-header rules remain authoritative where they match.
+
+```json
+{"body":"access_token=abc&client_secret=secret"}
+```
+
+No `form.value` applies unless there is a supported Content-Type-gated form body line. JSON behavior remains governed by `json.value` only for approved JSON field names.
+
+### Reporting Semantics
+
+- `form.value` counts one finding per approved form field value actually replaced.
+- Already-redacted exact form marker values produce no count.
+- Deferred or non-approved field names produce no count.
+- Bare no-value fields produce no count.
+- Unsupported bodies produce no count.
+- Form findings skipped because they overlap existing findings produce no count.
+- Reports contain only fixed rule ID `form.value` and counts.
+- Reports never contain raw form values, form field names, body snippets, or replacement previews.
+
+### Milestone 10 Acceptance Criteria
+
+- Existing Authorization behavior remains unchanged.
+- Existing Cookie behavior remains unchanged.
+- Existing selected sensitive-header behavior remains unchanged.
+- Existing selected sensitive-query-parameter behavior remains unchanged.
+- Existing selected sensitive JSON-like field behavior remains unchanged.
+- `form.value` rule and `<REDACTED:form.value>` marker are the only form report identifiers and markers.
+- Form scanning is Content-Type-gated to `application/x-www-form-urlencoded`.
+- Optional media-type parameters after the media type are supported.
+- Only the immediate first physical line after the blank header/body separator is scanned.
+- Approved field names redact only raw values after `=`.
+- Deferred and near-miss field names remain unchanged.
+- Matching is exact and ASCII-lowercase based.
+- No percent-decoding or plus-decoding is performed.
+- No substring, prefix, or suffix matching is approved.
+- Explicit empty values redact with `<REDACTED:form.value>` and count once.
+- Bare no-value fields remain unchanged and produce no count.
+- Additional `=` characters are preserved as part of the value.
+- `&` is the only supported separator.
+- Semicolon form separation is deferred.
+- Exact `<REDACTED:form.value>` values are idempotent.
+- Embedded `<REDACTED:form.value>` values are redacted.
+- Unapproved form marker-like values are redacted.
+- Wrong-family markers are redacted.
+- Form findings overlapping Authorization, Cookie, or `header.secret` findings are skipped.
+- Query and JSON findings overlapping form findings are skipped.
+- Query/JSON may still run in non-sensitive form fields when no form finding overlaps.
+- Reports use only fixed rule ID `form.value`.
+- Reports contain no raw values, form field names, snippets, or replacement previews.
+- No new dependency, configuration file, module, plugin, registry, network behavior, telemetry collection, LLM behavior, persistence, full HTTP parsing, directory processing, overwrite mode, or exit code is introduced.
+- Existing source immutability, output collision, dry-run, UTF-8, UTF-8 BOM, LF, CRLF, mixed-newline, final-newline, 10 MiB, NUL-byte, safe-error, and exit-code behavior remains unchanged.
+- Tests use only synthetic data.
+
 ## CLI Behavior
 
 Recommended command shape:
@@ -1516,6 +1910,13 @@ Normal CLI output may show the user-provided paths exactly as supplied. It must 
 - Basic credentials are not decoded or validated.
 - Generic structured credentials are redacted as one whole credential section.
 - Milestone 6 does not sanitize deferred query parameter names, JSON bodies, XML bodies, form bodies as structured form data, multipart bodies, HTML, JavaScript, or nested URLs inside query values.
+- Milestone 10 detects only approved sensitive field names in `application/x-www-form-urlencoded` bodies that follow a supported `Content-Type` line and a blank header/body separator.
+- Milestone 10 scans only the immediate first physical line after the separator and does not support multi-line or wrapped form bodies.
+- Milestone 10 does not scan raw form-urlencoded strings without a supported Content-Type line.
+- Milestone 10 does not decode percent-encoded or plus-encoded names or values.
+- Milestone 10 supports only `&` as a form field separator; semicolon-separated form fields are deferred.
+- Deferred form field names such as `code`, `state`, `nonce`, `secret`, `key`, `username`, `email`, `otp`, and `mfa_code` may retain secrets.
+- Broad approved exact form names such as `token`, `session`, `sig`, and `signature` may produce false positives.
 - Replacement marker collisions are accepted and handled deterministically.
 - Binary detection is intentionally limited and cannot reliably identify every binary file.
 - Output creation is exclusive, but atomic replacement is not guaranteed in milestone 1.

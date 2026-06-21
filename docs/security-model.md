@@ -3,7 +3,7 @@
 ## Protected Assets
 
 - Original evidence files.
-- Detected sensitive values, including Bearer tokens, Basic credentials, custom or structured Authorization credentials, Cookie values, selected sensitive API/authentication-related header values, selected sensitive URL query parameter values, selected sensitive JSON-like string field values, and future supported secret types.
+- Detected sensitive values, including Bearer tokens, Basic credentials, custom or structured Authorization credentials, Cookie values, selected sensitive API/authentication-related header values, selected sensitive URL query parameter values, selected sensitive JSON-like string field values, selected sensitive form-urlencoded field values, and future supported secret types.
 - Sanitized output integrity.
 - User trust that reported findings do not leak secret contents.
 - Local filesystem state at source and destination paths.
@@ -42,6 +42,7 @@
 - Reports for selected sensitive-header findings must use only fixed rule identifier `header.secret` and must not derive rule identifiers from header names, header groups, or detected values.
 - Reports for selected query-parameter findings must use only fixed rule identifier `query.secret` and must not derive rule identifiers from parameter names, parameter groups, or detected values.
 - Reports for selected JSON-like field findings must use only fixed rule identifier `json.value` and must not derive rule identifiers from field names, field groups, or detected values.
+- Reports for selected form-urlencoded field findings must use only fixed rule identifier `form.value` and must not derive rule identifiers from field names, field groups, or detected values.
 - The tool must not perform network calls or telemetry.
 - The first implementation must not use LLM detection.
 - Tests must use synthetic data only.
@@ -75,6 +76,8 @@ Safe output must not include:
 - Selected query parameter names as dynamic report identifiers.
 - Selected JSON-like field values or source excerpts.
 - Selected JSON-like field names as dynamic report identifiers.
+- Selected form-urlencoded field values or source excerpts.
+- Selected form-urlencoded field names as dynamic report identifiers.
 
 Sensitive values must not be accepted as command-line arguments. CLI arguments should be limited to paths and flags so secrets are not encouraged to appear in shell history or process listings.
 
@@ -186,9 +189,15 @@ Milestone 6 expands only to selected sensitive raw URL query parameter values in
 
 Milestone 9 expands only to selected sensitive JSON-like string fields in decoded text evidence. It supports an approved fixed list of exact JSON-like field names and replaces only the raw string value payload between quotes with `<REDACTED:json.value>`. It does not perform full JSON parsing, JSON validation, JSON reserialization, JSON schema checking, unicode-escape decoding for field names, recursive parsing of nested values, value-based classification, substring field-name matching, grouped rule IDs, per-field rule IDs, dynamic report IDs, user configuration, plugins, registries, new dependencies, or new exit codes.
 
+Milestone 10 expands only to selected sensitive `application/x-www-form-urlencoded` field values in HTTP-like evidence. It supports an approved fixed list of exact raw form field names and replaces raw values after `=` with `<REDACTED:form.value>`. It scans only bodies indicated by a physical line-start `Content-Type: application/x-www-form-urlencoded` header followed by a blank header/body separator and the immediate first physical line after the separator. It does not perform full HTTP parsing, multi-line or wrapped body parsing, `Content-Length`-based parsing, chunked-transfer decoding, multipart parsing, JSON parsing changes, XML parsing, HTML parsing, JavaScript parsing, URL decoding, percent-decoding, plus-decoding, value-based classification, substring field-name matching, grouped rule IDs, per-field rule IDs, dynamic report IDs, user configuration, plugins, registries, new dependencies, or new exit codes.
+
 Milestone 9 selected JSON-like fields may contain OAuth/OIDC-style access, refresh, ID, and auth tokens; session identifiers; JWTs; API keys; client secrets; shared secrets; private keys; signatures; SAML responses; and client assertions. Broad approved exact names such as `token`, `session`, `sig`, and `signature` may produce false positives, but they are explicitly approved because they are common in API evidence. `sig` and `signature` are often highly sensitive in signed URLs and callback flows. Cloud signature parameters such as `x-amz-signature`, `x-amz-security-token`, and `x-amz-credential` can authorize temporary access. API key parameters can authenticate requests.
 
 Milestone 6 intentionally defers broad names such as `key`, `code`, `state`, `nonce`, `secret`, `sign`, and `signed` to avoid broad false positives. Short cloud/SAS names such as `se`, `sp`, `sv`, `sr`, and `st` are deferred until a dedicated signed-URL context is approved. Tracking identifiers such as `utm_source`, `gclid`, `fbclid`, `msclkid`, and `_ga` are privacy or telemetry identifiers and belong in a separate milestone. Password and SAML/form-like parameter names are deferred until body/form parsing scope is addressed or explicitly approved.
+
+Milestone 10 selected form-urlencoded fields may contain OAuth/OIDC-style access, refresh, ID, and auth tokens; session identifiers; JWTs; API keys; client secrets; shared secrets; private keys; signatures; SAML responses; client assertions; and anti-CSRF tokens. Broad approved exact names such as `token`, `session`, `sig`, and `signature` may produce false positives, but they are explicitly approved because they are common in form submissions and matching is Content-Type-gated and exact-name-only. `sig` and `signature` are often highly sensitive in signed URL and callback flows. Cloud signature parameters such as `x-amz-signature`, `x-amz-security-token`, and `x-amz-credential` can authorize temporary access. API key parameters can authenticate requests.
+
+Milestone 10 intentionally defers `code`, `state`, `nonce`, `secret`, `key`, `username`, `email`, `user`, `otp`, and `mfa_code` to avoid expanding scope into context-dependent OAuth fields, privacy/PII identifiers, or one-time credential handling without explicit approval. Form bodies without a supported `Content-Type` line, multi-line form bodies, wrapped form bodies, semicolon-separated form fields, and percent-encoded field names remain unsupported and may retain secrets. Plus-decoding is not performed. A `+` character is treated as ordinary raw value text. Approved raw field names are still redacted even when their values contain `+`.
 
 Folded Cookie headers are unsupported in milestone 3. If an exact `Cookie:` line is immediately followed by a physical line beginning with a space or tab, the folded form remains completely unchanged. This is a residual false-negative risk because folded Cookie values may remain in output. Full folded-header parsing is deferred.
 
@@ -244,6 +253,10 @@ Milestone 9 uses only rule ID `json.value` and marker `<REDACTED:json.value>`. I
 
 Existing Authorization, Cookie, selected sensitive-header, and selected sensitive-query-parameter findings are authoritative in milestone 9. JSON findings that overlap existing findings must be skipped and produce no `json.value` count. `apply_findings` remains the final overlap guard. A preserved harmless Cookie value may still receive a `json.value` finding when no Cookie finding overlaps because harmless Cookie values are intentionally preserved. A non-sensitive query or header value may also receive a `json.value` finding when no broader finding overlaps.
 
+Milestone 10 uses only rule ID `form.value` and marker `<REDACTED:form.value>`. If the complete raw form field value is exactly `<REDACTED:form.value>`, the value is already sanitized and produces no finding or count. A marker embedded inside a larger raw form value is not already sanitized and must be redacted. Unapproved form marker-like values and wrong-family Authorization, Cookie, sensitive-header, query, or JSON markers inside selected form field values are treated as raw and redacted. Replacement-marker collisions are accepted and handled deterministically. Do not introduce a generalized marker framework.
+
+Existing Authorization, Cookie, and selected sensitive-header findings are collected before form findings and remain authoritative in milestone 10. Form findings that overlap those earlier broader findings must be skipped and produce no `form.value` count. Query and JSON findings run after form findings; query and JSON findings that overlap form findings must be skipped and produce no `query.secret` or `json.value` count. `apply_findings` remains the final overlap guard and may still prevent accidental overlapping findings if future refactors change ordering. A non-sensitive form field may still receive a `query.secret` or `json.value` finding when no form finding overlaps.
+
 ## Dry-Run Behavior
 
 Dry-run mode performs validation, reading, decoding, and detection. It must not create the output file and must not create temporary files. It reports only safe rule identifiers and counts.
@@ -296,6 +309,14 @@ Directory processing is deferred. Future directory mode must define partial-fail
 - Broad approved exact names such as `token`, `session`, `sig`, and `signature` may produce false positives.
 - Malformed JSON-like candidates may be skipped and may retain secrets.
 - Existing Authorization, Cookie, selected sensitive-header, and selected sensitive-query-parameter findings remain authoritative for overlapping spans.
+- Milestone 10 does not guarantee detection of every sensitive form-urlencoded field or every possible secret.
+- Milestone 10 scans only form bodies indicated by a supported `Content-Type` line and a blank header/body separator; form bodies without such a header, multi-line form bodies, wrapped form bodies, and semicolon-separated form fields remain unsupported and may retain secrets.
+- Milestone 10 scans only the immediate first physical line after the separator.
+- Milestone 10 does not percent-decode or plus-decode names or values, so percent-encoded field names may remain unsupported and may retain sensitive values. Raw values containing `+` are still redacted when the raw field name is approved.
+- Milestone 10 may leave deferred field names such as `code`, `state`, `nonce`, `secret`, `key`, `username`, `email`, `otp`, and `mfa_code` unchanged.
+- Broad approved exact form names such as `token`, `session`, `sig`, and `signature` may produce false positives.
+- Malformed form body candidates may be skipped and may retain secrets.
+- Existing Authorization, Cookie, and selected sensitive-header findings remain authoritative for overlapping spans. Query and JSON findings run after form and are skipped when they overlap form findings.
 
 ## Explicitly Unsupported Adversarial Filesystem Scenarios
 

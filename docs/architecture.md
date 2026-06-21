@@ -37,7 +37,7 @@ Do not create modules such as `paths.py`, `reporting.py`, `textio.py`, `engine.p
 
 ## Data Flow
 
-Milestone 1 through milestone 6 data flow:
+Milestone 1 through milestone 10 data flow:
 
 1. Typer parses `sanitize INPUT --output OUTPUT [--dry-run]`.
 2. The command validates the input path, output path, and output parent directory.
@@ -46,7 +46,7 @@ Milestone 1 through milestone 6 data flow:
 5. The command reads the complete input file in memory, up to 10 MiB.
 6. The command rejects NUL bytes.
 7. The command decodes strict UTF-8 or UTF-8 with BOM.
-8. The sanitizer applies the approved Authorization-header rule set, the approved Cookie-header rule set in milestone 3 and later, the approved selected-sensitive-header rule set in milestone 5, and the approved selected-sensitive-query-parameter rule set in milestone 6.
+8. The sanitizer applies the approved Authorization-header rule set, the approved Cookie-header rule set in milestone 3 and later, the approved selected-sensitive-header rule set in milestone 5, the approved form-urlencoded-field rule set in milestone 10, the approved selected-sensitive-query-parameter rule set in milestone 6, and the approved selected-sensitive-JSON-like-field rule set in milestone 9.
 9. The sanitizer returns sanitized text plus a safe report.
 10. Dry-run mode prints the safe report and writes nothing.
 11. Normal mode creates the output path exclusively and writes the sanitized bytes.
@@ -88,7 +88,7 @@ These are public design concepts, not a requirement to create separate modules o
 
 Findings should store:
 
-- `rule_id`: stable identifier, such as `authorization.bearer`, `authorization.basic`, `authorization.other`, `cookie.value`, `cookie.header`, `header.secret`, or `query.secret`.
+- `rule_id`: stable identifier, such as `authorization.bearer`, `authorization.basic`, `authorization.other`, `cookie.value`, `cookie.header`, `header.secret`, `query.secret`, `json.value`, or `form.value`.
 - `start`: start offset in decoded text.
 - `end`: end offset in decoded text.
 - `replacement`: deterministic replacement text.
@@ -138,6 +138,10 @@ Milestone 4 should continue to stay in `sanitizer.py`. Cookie-name classificatio
 Milestone 5 should continue to stay in `sanitizer.py`. Sensitive-header sanitization should add only small private constants and one private finder that reuses `_iter_physical_lines` to inspect decoded physical lines. It should reuse `Finding`, `SanitizationReport`, `apply_findings`, `sanitize_text`, existing file handling, right-to-left replacement, and overlap protection. No new public data structures or public APIs are required.
 
 Milestone 6 should continue to stay in `sanitizer.py`. Query-parameter sanitization should add only small private constants and one private raw query finder. It should reuse `Finding`, `SanitizationReport`, `_iter_physical_lines` where useful for line-boundary consistency, `apply_findings`, `sanitize_text`, existing file handling, right-to-left replacement, and overlap protection. No new public data structures or public APIs are required.
+
+Milestone 9 should continue to stay in `sanitizer.py`. JSON-like field sanitization should add only small private constants and one private raw JSON-like scanner. It should reuse `Finding`, `SanitizationReport`, `apply_findings`, `sanitize_text`, existing file handling, right-to-left replacement, and overlap protection. No new public data structures or public APIs are required.
+
+Milestone 10 should continue to stay in `sanitizer.py`. Form-urlencoded field sanitization should add only small private constants and one private Content-Type-gated form body finder. It should reuse `Finding`, `SanitizationReport`, `_iter_physical_lines` for line-boundary detection, `apply_findings`, `sanitize_text`, existing file handling, right-to-left replacement, and overlap protection. No new public data structures or public APIs are required.
 
 ## Encoding And Newline Behavior
 
@@ -613,6 +617,78 @@ Cookie: theme={"token":"abc"}
 This may produce `json.value` because `theme` is an approved harmless Cookie name whose value is intentionally preserved, so no Cookie finding covers that span.
 
 Milestone 9 must not add JSON parsing dependencies, `json.py`, `rules/`, configuration files, user-editable policy, registries, plugins, dependency injection, inheritance, generalized parser frameworks, recursive parsers, new public APIs, or new exit codes.
+
+## Sensitive Form-URL-Encoded Field Rules
+
+Milestone 10 supports selected sensitive `application/x-www-form-urlencoded` field values in HTTP-like evidence. It uses one Content-Type-gated form body scanner, not a full HTTP parser, not a generic `name=value` substring search, and not URL decoding or re-encoding. The finder may match form body lines that follow a supported `Content-Type` line and a blank header/body separator.
+
+Use small private constants in `sanitizer.py`:
+
+```python
+RULE_ID_FORM_VALUE = "form.value"
+REDACTION_MARKER_FORM_VALUE = "<REDACTED:form.value>"
+APPROVED_FORM_REDACTION_MARKERS = frozenset((REDACTION_MARKER_FORM_VALUE,))
+SENSITIVE_FORM_FIELD_NAMES = frozenset(...)
+```
+
+Use one private Content-Type-gated form body finder, conceptually:
+
+```python
+def _find_form_urlencoded_values(
+    text: str, existing_findings: Sequence[Finding]
+) -> tuple[Finding, ...]:
+    ...
+```
+
+The approved field-name set is fixed and exact. Matching must be case-insensitive against the raw field name after ASCII-only lowercase normalization. It must not percent-decode names, plus-decode names, normalize Unicode, classify by value, infer from value shape, or use substring, prefix, or suffix matching. `_`, `-`, and `.` remain distinct.
+
+The finder should scan decoded text with these requirements:
+
+1. Locate physical lines starting with `Content-Type` followed by optional spaces or tabs, `:`, optional spaces or tabs, and the media type `application/x-www-form-urlencoded`.
+2. Allow optional media-type parameters such as `; charset=utf-8` after the media type.
+3. Find the first blank physical line after the matched Content-Type line; this is the header/body separator.
+4. Treat the immediate next physical line as the form body candidate. If that line is blank, no form body is scanned.
+5. Split the candidate into raw `name=value` segments using `&` as the only separator.
+6. For each segment, find the first `=`. Skip bare no-value segments.
+7. Compare the raw name before `=` to the approved case-insensitive field-name set.
+8. If the name is not approved, skip the segment.
+9. Replace the complete raw value span after `=` with `<REDACTED:form.value>`.
+10. Treat explicit empty values such as `access_token=` as replaceable value spans and emit one finding.
+11. Skip exact complete raw values equal to `<REDACTED:form.value>`.
+12. Skip candidate value spans that overlap any existing finding.
+13. Preserve field name casing, `=`, `&`, field order, repeated fields, surrounding body text, line endings, UTF-8 BOM state, and final-newline state.
+
+Marker handling must preserve idempotence. The approved marker is `<REDACTED:form.value>`. Embedded markers, unapproved form marker-like values, and wrong-family markers are treated as raw and redacted. Repeated sanitization must produce byte-identical output.
+
+The form finder must not introduce grouped or per-field rule IDs such as `form.token`, `form.password`, `form.api_key`, or `form.secret`. Reports should aggregate counts by fixed rule ID `form.value` only. Field names may remain visible in sanitized evidence for structure, but they must not be stored in `Finding`, `SanitizationReport`, CLI output, or reports as dynamic identifiers.
+
+Existing findings are authoritative. In `sanitize_text`, collect Authorization findings, Cookie findings, and selected sensitive-header findings first. Form findings should run next and receive those existing finding spans to skip any candidate value span that overlaps them. Query findings and JSON findings should run after form findings and also skip any candidate value span that overlaps an existing form finding. `apply_findings` remains the final overlap guard. Do not introduce a generalized overlap-resolution system.
+
+Examples of overlap behavior:
+
+```http
+Authorization: Bearer access_token=abc
+```
+
+This should produce only `authorization.bearer` because the Authorization finding covers the form-like text.
+
+```http
+Content-Type: application/x-www-form-urlencoded
+
+access_token=https://api.example.test/cb?token=abc
+```
+
+This should produce only `form.value` because the form finding covers the whole `access_token` value, and nested query content is skipped due to overlap.
+
+```http
+Content-Type: application/x-www-form-urlencoded
+
+redirect_uri=https://callback.example.test/cb?access_token=abc
+```
+
+`redirect_uri` is deferred, so no `form.value` applies. Query may redact the nested `access_token` if no form finding overlaps.
+
+Milestone 10 must not add HTTP parsing dependencies, `form.py`, `rules/`, configuration files, user-editable policy, registries, plugins, dependency injection, inheritance, generalized parser frameworks, recursive parsers, new public APIs, or new exit codes.
 
 ## Exclusive Output Creation Strategy
 
