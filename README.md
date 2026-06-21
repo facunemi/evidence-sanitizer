@@ -282,4 +282,4 @@ This tool is intended for authorized security testing and internal evidence hand
 
 ## License
 
-License not yet selected.
+MIT License. See `LICENSE`.
