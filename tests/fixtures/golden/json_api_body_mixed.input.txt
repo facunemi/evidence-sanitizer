@@ -1,0 +1,6 @@
+POST /api/session HTTP/1.1
+Host: example.com
+Content-Type: application/json
+Authorization: Bearer synthetic-bearer-token
+
+{"access_token":"synthetic-access-token","refresh_token":"synthetic-refresh-token","id_token":"synthetic-id-token","token_type":"Bearer","client_secret":"synthetic-client-secret","password":"synthetic-password","api_key":"synthetic-api-key","user_id":"user-123","theme":"dark"}

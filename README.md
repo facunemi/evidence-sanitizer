@@ -21,8 +21,9 @@ The current rule families cover common HTTP-style evidence:
 | `cookie.header` | `<REDACTED:cookie.header>` | Whole `Cookie` header fallback when safe parsing fails |
 | `header.secret` | `<REDACTED:header.secret>` | Selected sensitive API/auth header values |
 | `query.secret` | `<REDACTED:query.secret>` | Selected sensitive URL query parameter values |
+| `json.value` | `<REDACTED:json.value>` | String values of approved sensitive JSON field names |
 
-Reports use fixed rule IDs and counts only. They never include raw detected values, source excerpts, or custom names.
+Reports use fixed rule IDs and counts only. They never include raw detected values, source excerpts, field names, or custom names.
 
 ## Safety Model
 
@@ -137,6 +138,22 @@ Output:
 GET /api/profile?access_token=<REDACTED:query.secret>&sig=<REDACTED:query.secret>&theme=dark HTTP/1.1
 ```
 
+### JSON Sensitive Fields
+
+Input:
+
+```json
+{"access_token":"synthetic-access-token","refresh_token":"synthetic-refresh-token","token_type":"Bearer","client_secret":"synthetic-client-secret","user_id":"user-123"}
+```
+
+Output:
+
+```json
+{"access_token":"<REDACTED:json.value>","refresh_token":"<REDACTED:json.value>","token_type":"Bearer","client_secret":"<REDACTED:json.value>","user_id":"user-123"}
+```
+
+Only direct string values of approved field names are redacted. Numbers, booleans, null, arrays, and object values are left unchanged. Existing broader findings such as `Authorization: Bearer` remain authoritative.
+
 ### Golden Fixtures
 
 The repository includes synthetic golden fixtures under `tests/fixtures/golden/`. Each fixture pairs an `.input.txt` file with a matching `.expected.txt` file showing the sanitized output.
@@ -149,6 +166,7 @@ These fixtures use reserved domains such as `example.test`, `api.example.test`, 
 - `mobile_api_trace_like` - mobile/debug trace.
 - `report_note_mixed` - human-written notes mixing prose and snippets.
 - `edge_cases_markers_and_malformed_cookie` - idempotence, markers, malformed Cookie fallback, and overlap behavior.
+- `json_api_body_mixed` - JSON body with sensitive field values and an overlapping Authorization header.
 
 ## CLI Usage
 
@@ -171,6 +189,7 @@ authorization.bearer: 1
 cookie.value: 1
 header.secret: 1
 query.secret: 2
+json.value: 3
 ```
 
 Dry run:
@@ -193,11 +212,12 @@ Reports contain only fixed rule IDs and counts. They never include detected valu
 
 This tool is best-effort within its documented rules. Unsupported formats and patterns may retain secrets, including but not limited to:
 
-- JSON body parsing.
 - Form-urlencoded body parsing.
 - Multipart parsing.
 - XML parsing.
 - HTML/JavaScript parsing.
+- Full JSON parsing, validation, or reserialization; JSON support is conservative raw JSON-like string-key/string-value scanning.
+- Non-string direct JSON values such as numbers, booleans, null, arrays, or objects. Nested approved string fields may still redact when matched as their own JSON-like pairs.
 - Recursive URL parsing.
 - URL decoding or re-encoding.
 - Percent-encoded query parameter names.
@@ -225,7 +245,6 @@ git diff --check
 
 Potential future work:
 
-- JSON sensitive fields
 - Form-urlencoded sensitive fields
 - Proxy-Authorization and selected signature headers
 - Optional JSON report output

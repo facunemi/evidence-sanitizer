@@ -16,6 +16,7 @@ RULE_ID_COOKIE_VALUE = "cookie.value"
 RULE_ID_COOKIE_HEADER = "cookie.header"
 RULE_ID_HEADER_SECRET = "header.secret"
 RULE_ID_QUERY_SECRET = "query.secret"
+RULE_ID_JSON_VALUE = "json.value"
 
 REDACTION_MARKER_AUTHORIZATION_BEARER = "<REDACTED:authorization.bearer>"
 REDACTION_MARKER_AUTHORIZATION_BASIC = "<REDACTED:authorization.basic>"
@@ -24,6 +25,7 @@ REDACTION_MARKER_COOKIE_VALUE = "<REDACTED:cookie.value>"
 REDACTION_MARKER_COOKIE_HEADER = "<REDACTED:cookie.header>"
 REDACTION_MARKER_HEADER_SECRET = "<REDACTED:header.secret>"
 REDACTION_MARKER_QUERY_SECRET = "<REDACTED:query.secret>"
+REDACTION_MARKER_JSON_VALUE = "<REDACTED:json.value>"
 COOKIE_REDACTION_MARKER_PREFIX = "<REDACTED:cookie."
 REDACTION_MARKER = REDACTION_MARKER_AUTHORIZATION_BEARER
 APPROVED_REDACTION_MARKERS = frozenset(
@@ -40,6 +42,7 @@ APPROVED_COOKIE_REDACTION_MARKERS = frozenset(
     )
 )
 APPROVED_QUERY_REDACTION_MARKERS = frozenset((REDACTION_MARKER_QUERY_SECRET,))
+APPROVED_JSON_REDACTION_MARKERS = frozenset((REDACTION_MARKER_JSON_VALUE,))
 COOKIE_HEADER_NAME = "Cookie"
 HTTP_TOKEN_CHARACTERS = frozenset(
     "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -174,6 +177,47 @@ SENSITIVE_QUERY_PARAMETER_NAMES = frozenset(
         "x-amz-signature",
         "x-goog-credential",
         "x-goog-signature",
+    )
+)
+SENSITIVE_JSON_FIELD_NAMES = frozenset(
+    (
+        "token",
+        "access_token",
+        "accesstoken",
+        "refresh_token",
+        "refreshtoken",
+        "id_token",
+        "idtoken",
+        "auth_token",
+        "authtoken",
+        "jwt",
+        "session",
+        "session_id",
+        "sessionid",
+        "sid",
+        "api_key",
+        "apikey",
+        "x_api_key",
+        "xapikey",
+        "password",
+        "passwd",
+        "pwd",
+        "client_secret",
+        "clientsecret",
+        "shared_secret",
+        "sharedsecret",
+        "private_key",
+        "privatekey",
+        "sig",
+        "signature",
+        "x_amz_signature",
+        "xamzsignature",
+        "x_goog_signature",
+        "xgoogsignature",
+        "client_assertion",
+        "clientassertion",
+        "saml_response",
+        "samlresponse",
     )
 )
 _QUERY_TOKEN_TERMINATORS = frozenset(" \t\r\n\"'`#<>")
@@ -481,6 +525,12 @@ def _find_query_parameter_values(
                 if name.lower() in SENSITIVE_QUERY_PARAMETER_NAMES:
                     value_start = equals_index + 1
                     value_end = segment_end
+                    json_value_end = _find_balanced_json_like_value_end(
+                        text, value_start
+                    )
+                    if json_value_end is not None:
+                        value_end = json_value_end
+                        token_position = json_value_end
                     if text[value_start:value_end] == REDACTION_MARKER_QUERY_SECRET:
                         pass
                     elif _overlaps_existing_finding(
@@ -506,6 +556,160 @@ def _find_query_parameter_values(
             break
 
         position = token_position
+
+    return tuple(findings)
+
+
+class _MalformedJsonString(Exception):
+    """Raised when a JSON-like string candidate cannot be parsed safely."""
+
+    def __init__(self, position: int) -> None:
+        super().__init__()
+        self.position = position
+
+
+def _ascii_lower(value: str) -> str:
+    """Lowercase only ASCII A-Z; leave all other characters unchanged."""
+    return "".join(c.lower() if "A" <= c <= "Z" else c for c in value)
+
+
+def _parse_json_string(text: str, start: int) -> tuple[int, int, int]:
+    """Parse a JSON-like string starting at `start`.
+
+    Returns (payload_start, payload_end, end_position) where payload is the
+    raw content between the opening and closing quotes and end_position is the
+    index just after the closing quote.
+
+    Raises _MalformedJsonString if the string is unterminated, contains a
+    literal CR/LF, or contains an invalid escape sequence.
+    """
+    position = start + 1
+    while position < len(text):
+        character = text[position]
+        if character == '"':
+            return start + 1, position, position + 1
+        if character in "\r\n":
+            raise _MalformedJsonString(position)
+        if character == "\\":
+            if position + 1 >= len(text):
+                raise _MalformedJsonString(position)
+            escaped = text[position + 1]
+            if escaped == "u":
+                if position + 6 > len(text):
+                    raise _MalformedJsonString(position)
+                for hex_index in range(position + 2, position + 6):
+                    if text[hex_index] not in "0123456789abcdefABCDEF":
+                        raise _MalformedJsonString(position)
+                position += 6
+                continue
+            if escaped not in '"\\/bfnrt':
+                raise _MalformedJsonString(position)
+            position += 2
+            continue
+        position += 1
+    raise _MalformedJsonString(position)
+
+
+def _find_balanced_json_like_value_end(text: str, start: int) -> int | None:
+    """Return the end offset for a balanced raw JSON-like object or array."""
+    if start >= len(text) or text[start] not in "[{":
+        return None
+
+    closing_by_opening = {"{": "}", "[": "]"}
+    expected_closings = [closing_by_opening[text[start]]]
+    position = start + 1
+
+    while position < len(text):
+        character = text[position]
+        if character == '"':
+            try:
+                _payload_start, _payload_end, position = _parse_json_string(
+                    text, position
+                )
+            except _MalformedJsonString:
+                return None
+            continue
+        if character in closing_by_opening:
+            expected_closings.append(closing_by_opening[character])
+            position += 1
+            continue
+        if character in "}]":
+            if not expected_closings or character != expected_closings[-1]:
+                return None
+            expected_closings.pop()
+            position += 1
+            if not expected_closings:
+                return position
+            continue
+        if character in "\r\n":
+            return None
+        position += 1
+
+    return None
+
+
+def _find_json_field_values(
+    text: str, existing_findings: Sequence[Finding]
+) -> tuple[Finding, ...]:
+    """Find approved sensitive JSON-like string field values."""
+    findings: list[Finding] = []
+    existing_sorted = sorted(existing_findings, key=lambda item: item.start)
+    position = 0
+
+    while position < len(text):
+        if text[position] != '"':
+            position += 1
+            continue
+
+        try:
+            key_payload_start, key_payload_end, key_end = _parse_json_string(
+                text, position
+            )
+        except _MalformedJsonString as exc:
+            position = exc.position + 1
+            continue
+
+        scan_position = key_end
+        while scan_position < len(text) and text[scan_position] in " \t":
+            scan_position += 1
+        if scan_position >= len(text) or text[scan_position] != ":":
+            position = key_end
+            continue
+
+        scan_position += 1
+        while scan_position < len(text) and text[scan_position] in " \t":
+            scan_position += 1
+        if scan_position >= len(text) or text[scan_position] != '"':
+            position = key_end
+            continue
+
+        try:
+            value_payload_start, value_payload_end, value_end = _parse_json_string(
+                text, scan_position
+            )
+        except _MalformedJsonString as exc:
+            position = exc.position + 1
+            continue
+
+        key_payload = text[key_payload_start:key_payload_end]
+        if _ascii_lower(key_payload) in SENSITIVE_JSON_FIELD_NAMES:
+            value_payload = text[value_payload_start:value_payload_end]
+            if (
+                value_payload != REDACTION_MARKER_JSON_VALUE
+                and not _overlaps_existing_finding(
+                    value_payload_start, value_payload_end, existing_sorted
+                )
+            ):
+                findings.append(
+                    Finding(
+                        rule_id=RULE_ID_JSON_VALUE,
+                        start=value_payload_start,
+                        end=value_payload_end,
+                        replacement=REDACTION_MARKER_JSON_VALUE,
+                    )
+                )
+
+        position = value_end
 
     return tuple(findings)
 
@@ -758,7 +962,8 @@ def sanitize_text(text: str) -> tuple[str, SanitizationReport]:
         + _find_sensitive_header_values(text)
     )
     query_findings = _find_query_parameter_values(text, existing_findings)
-    findings = existing_findings + query_findings
+    json_findings = _find_json_field_values(text, existing_findings + query_findings)
+    findings = existing_findings + query_findings + json_findings
     sanitized = apply_findings(text, findings)
     counts: dict[str, int] = {}
     for finding in findings:

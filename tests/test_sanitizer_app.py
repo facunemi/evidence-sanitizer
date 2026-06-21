@@ -19,6 +19,7 @@ from evidence_sanitizer.sanitizer import (
     REDACTION_MARKER_COOKIE_HEADER,
     REDACTION_MARKER_COOKIE_VALUE,
     REDACTION_MARKER_HEADER_SECRET,
+    REDACTION_MARKER_JSON_VALUE,
     REDACTION_MARKER_QUERY_SECRET,
     RULE_ID_AUTHORIZATION_BASIC,
     RULE_ID_AUTHORIZATION_BEARER,
@@ -26,6 +27,7 @@ from evidence_sanitizer.sanitizer import (
     RULE_ID_COOKIE_HEADER,
     RULE_ID_COOKIE_VALUE,
     RULE_ID_HEADER_SECRET,
+    RULE_ID_JSON_VALUE,
     RULE_ID_QUERY_SECRET,
     SafeError,
     sanitize_file,
@@ -49,6 +51,8 @@ QUERY_BODY_CLIENT_SECRET = "synthetic-query-body-client-secret"
 QUERY_BODY_SIGNATURE = "synthetic-query-body-signature"
 QUERY_EMBEDDED = f"prefix{REDACTION_MARKER_QUERY_SECRET}suffix"
 QUERY_NEAR_MISS = "synthetic-query-near-miss"
+JSON_ACCESS_TOKEN = "synthetic-json-access-token"
+JSON_PASSWORD = "synthetic-json-password"
 SENSITIVE_VALUES = (
     TOKEN,
     BASIC_TOKEN,
@@ -66,6 +70,8 @@ SENSITIVE_VALUES = (
     QUERY_BODY_CLIENT_SECRET,
     QUERY_BODY_SIGNATURE,
     QUERY_EMBEDDED,
+    JSON_ACCESS_TOKEN,
+    JSON_PASSWORD,
 )
 
 
@@ -184,7 +190,7 @@ def test_authorization_and_cookie_headers_sanitized_and_reported(
     assert_source_unchanged(input_path, source)
 
 
-def test_milestone_6_query_parameter_integration(tmp_path: Path) -> None:
+def test_milestone_9_combined_rule_integration(tmp_path: Path) -> None:
     input_path = tmp_path / "evidence.txt"
     output_path = tmp_path / "evidence.sanitized.txt"
     second_output_path = tmp_path / "evidence.sanitized-again.txt"
@@ -211,6 +217,8 @@ def test_milestone_6_query_parameter_integration(tmp_path: Path) -> None:
         f"?token={QUERY_EMBEDDED}\n"
         f"?token={REDACTION_MARKER_HEADER_SECRET}\n"
         f"?access_token_expires={QUERY_NEAR_MISS}\n"
+        f'Body: {{"access_token":"{JSON_ACCESS_TOKEN}",'
+        f'"password":"{JSON_PASSWORD}","user_id":"user-123"}}\n'
     ).encode()
     expected = (
         "GET /oauth/callback?"
@@ -236,6 +244,8 @@ def test_milestone_6_query_parameter_integration(tmp_path: Path) -> None:
         f"?token={REDACTION_MARKER_QUERY_SECRET}\n"
         f"?token={REDACTION_MARKER_QUERY_SECRET}\n"
         f"?access_token_expires={QUERY_NEAR_MISS}\n"
+        f'Body: {{"access_token":"{REDACTION_MARKER_JSON_VALUE}",'
+        f'"password":"{REDACTION_MARKER_JSON_VALUE}","user_id":"user-123"}}\n'
     ).encode()
     input_path.write_bytes(source)
 
@@ -250,12 +260,20 @@ def test_milestone_6_query_parameter_integration(tmp_path: Path) -> None:
         RULE_ID_COOKIE_HEADER: 1,
         RULE_ID_HEADER_SECRET: 1,
         RULE_ID_QUERY_SECRET: 9,
+        RULE_ID_JSON_VALUE: 2,
     }
     assert_sanitized_output(output_path, expected)
     assert_source_unchanged(input_path, source)
-    for name in ("access_token", "signature", "token", "api-key", "client_secret"):
+    for name in (
+        "access_token",
+        "signature",
+        "token",
+        "api-key",
+        "client_secret",
+        "password",
+    ):
         if any(name in rule_id for rule_id in result.report.counts_by_rule):
-            pytest.fail("report included a query parameter name")
+            pytest.fail("report included a query parameter or json field name")
 
     second_result = sanitize_file(output_path, second_output_path, dry_run=False)
     assert second_result.report.counts_by_rule == {}
@@ -273,6 +291,7 @@ def test_milestone_6_query_parameter_integration(tmp_path: Path) -> None:
         RULE_ID_COOKIE_HEADER: 1,
         RULE_ID_HEADER_SECRET: 1,
         RULE_ID_QUERY_SECRET: 9,
+        RULE_ID_JSON_VALUE: 2,
     }
 
 

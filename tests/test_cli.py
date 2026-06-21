@@ -14,6 +14,7 @@ from evidence_sanitizer.sanitizer import (
     REDACTION_MARKER_COOKIE_HEADER,
     REDACTION_MARKER_COOKIE_VALUE,
     REDACTION_MARKER_HEADER_SECRET,
+    REDACTION_MARKER_JSON_VALUE,
     REDACTION_MARKER_QUERY_SECRET,
 )
 
@@ -30,6 +31,8 @@ SYNTHETIC_HARMLESS_COOKIE_VALUE = "synthetic-second-cookie-value"
 SYNTHETIC_FALLBACK_COOKIE_VALUE = "synthetic-fallback-cookie-value"
 SYNTHETIC_HEADER_SECRET_VALUE = "synthetic-sensitive-header-value"
 SYNTHETIC_QUERY_VALUE = "synthetic-query-value"
+SYNTHETIC_JSON_ACCESS_TOKEN = "synthetic-json-access-token"
+SYNTHETIC_JSON_PASSWORD = "synthetic-json-password"
 OUTPUT_FORBIDDEN_VALUES = (
     SYNTHETIC_CREDENTIAL,
     SYNTHETIC_BASIC_CREDENTIAL,
@@ -38,6 +41,8 @@ OUTPUT_FORBIDDEN_VALUES = (
     SYNTHETIC_FALLBACK_COOKIE_VALUE,
     SYNTHETIC_HEADER_SECRET_VALUE,
     SYNTHETIC_QUERY_VALUE,
+    SYNTHETIC_JSON_ACCESS_TOKEN,
+    SYNTHETIC_JSON_PASSWORD,
 )
 CLI_FORBIDDEN_VALUES = OUTPUT_FORBIDDEN_VALUES + (SYNTHETIC_HARMLESS_COOKIE_VALUE,)
 
@@ -146,6 +151,8 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
             f"X-API-Key: {SYNTHETIC_HEADER_SECRET_VALUE}\n"
             "Accept: application/json\n"
             f"Body: https://x.test/?api-key={SYNTHETIC_QUERY_VALUE}\n"
+            f'JSON: {{"access_token":"{SYNTHETIC_JSON_ACCESS_TOKEN}",'
+            f'"password":"{SYNTHETIC_JSON_PASSWORD}","user_id":"user-123"}}\n'
         ).encode()
         expected = (
             f"GET /api/profile?token={REDACTION_MARKER_QUERY_SECRET} HTTP/1.1\n"
@@ -160,6 +167,8 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
             f"X-API-Key: {REDACTION_MARKER_HEADER_SECRET}\n"
             "Accept: application/json\n"
             f"Body: https://x.test/?api-key={REDACTION_MARKER_QUERY_SECRET}\n"
+            f'JSON: {{"access_token":"{REDACTION_MARKER_JSON_VALUE}",'
+            f'"password":"{REDACTION_MARKER_JSON_VALUE}","user_id":"user-123"}}\n'
         ).encode()
         input_path.write_bytes(source)
 
@@ -177,10 +186,13 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
         assert "cookie.header: 1" in output
         assert "cookie.value: 1" in output
         assert "header.secret: 1" in output
+        assert "json.value: 2" in output
         assert "query.secret: 2" in output
         assert "Authorization:" not in output
         assert "Cookie:" not in output
         assert "X-API-Key:" not in output
+        assert "access_token" not in output
+        assert "password" not in output
         assert_output_bytes(output_path, expected)
         assert_file_unchanged(input_path, source)
 
@@ -193,7 +205,8 @@ def test_sanitize_dry_run_reports_counts_without_creating_output(
     input_path.write_text(
         f"Cookie: session={SYNTHETIC_COOKIE_VALUE}\n"
         f"Authorization: Bearer {SYNTHETIC_CREDENTIAL}\n"
-        f"X-Auth-Token: {SYNTHETIC_HEADER_SECRET_VALUE}\n",
+        f"X-Auth-Token: {SYNTHETIC_HEADER_SECRET_VALUE}\n"
+        f'{{"token":"{SYNTHETIC_JSON_ACCESS_TOKEN}"}}\n',
         encoding="utf-8",
     )
 
@@ -209,6 +222,8 @@ def test_sanitize_dry_run_reports_counts_without_creating_output(
     assert "authorization.bearer: 1" in output
     assert "cookie.value: 1" in output
     assert "header.secret: 1" in output
+    assert "json.value: 1" in output
+    assert "token:" not in output
     assert not output_path.exists()
 
 
