@@ -13,6 +13,7 @@ from evidence_sanitizer.sanitizer import (
     REDACTION_MARKER_AUTHORIZATION_CREDENTIALS,
     REDACTION_MARKER_COOKIE_HEADER,
     REDACTION_MARKER_COOKIE_VALUE,
+    REDACTION_MARKER_FORM_VALUE,
     REDACTION_MARKER_HEADER_SECRET,
     REDACTION_MARKER_JSON_VALUE,
     REDACTION_MARKER_QUERY_SECRET,
@@ -33,6 +34,9 @@ SYNTHETIC_HEADER_SECRET_VALUE = "synthetic-sensitive-header-value"
 SYNTHETIC_QUERY_VALUE = "synthetic-query-value"
 SYNTHETIC_JSON_ACCESS_TOKEN = "synthetic-json-access-token"
 SYNTHETIC_JSON_PASSWORD = "synthetic-json-password"
+SYNTHETIC_FORM_ACCESS_TOKEN = "synthetic-form-access-token"
+SYNTHETIC_FORM_CLIENT_SECRET = "synthetic-form-client-secret"
+SYNTHETIC_FORM_PASSWORD = "synthetic-form-password"
 OUTPUT_FORBIDDEN_VALUES = (
     SYNTHETIC_CREDENTIAL,
     SYNTHETIC_BASIC_CREDENTIAL,
@@ -43,6 +47,9 @@ OUTPUT_FORBIDDEN_VALUES = (
     SYNTHETIC_QUERY_VALUE,
     SYNTHETIC_JSON_ACCESS_TOKEN,
     SYNTHETIC_JSON_PASSWORD,
+    SYNTHETIC_FORM_ACCESS_TOKEN,
+    SYNTHETIC_FORM_CLIENT_SECRET,
+    SYNTHETIC_FORM_PASSWORD,
 )
 CLI_FORBIDDEN_VALUES = OUTPUT_FORBIDDEN_VALUES + (SYNTHETIC_HARMLESS_COOKIE_VALUE,)
 
@@ -153,6 +160,12 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
             f"Body: https://x.test/?api-key={SYNTHETIC_QUERY_VALUE}\n"
             f'JSON: {{"access_token":"{SYNTHETIC_JSON_ACCESS_TOKEN}",'
             f'"password":"{SYNTHETIC_JSON_PASSWORD}","user_id":"user-123"}}\n'
+            "Content-Type: application/x-www-form-urlencoded\n"
+            "\n"
+            f"access_token={SYNTHETIC_FORM_ACCESS_TOKEN}"
+            f"&client_secret={SYNTHETIC_FORM_CLIENT_SECRET}"
+            f"&password={SYNTHETIC_FORM_PASSWORD}"
+            "&grant_type=authorization_code\n"
         ).encode()
         expected = (
             f"GET /api/profile?token={REDACTION_MARKER_QUERY_SECRET} HTTP/1.1\n"
@@ -169,6 +182,12 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
             f"Body: https://x.test/?api-key={REDACTION_MARKER_QUERY_SECRET}\n"
             f'JSON: {{"access_token":"{REDACTION_MARKER_JSON_VALUE}",'
             f'"password":"{REDACTION_MARKER_JSON_VALUE}","user_id":"user-123"}}\n'
+            "Content-Type: application/x-www-form-urlencoded\n"
+            "\n"
+            f"access_token={REDACTION_MARKER_FORM_VALUE}"
+            f"&client_secret={REDACTION_MARKER_FORM_VALUE}"
+            f"&password={REDACTION_MARKER_FORM_VALUE}"
+            "&grant_type=authorization_code\n"
         ).encode()
         input_path.write_bytes(source)
 
@@ -188,6 +207,7 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
         assert "header.secret: 1" in output
         assert "json.value: 2" in output
         assert "query.secret: 2" in output
+        assert "form.value: 3" in output
         assert "Authorization:" not in output
         assert "Cookie:" not in output
         assert "X-API-Key:" not in output
@@ -206,7 +226,10 @@ def test_sanitize_dry_run_reports_counts_without_creating_output(
         f"Cookie: session={SYNTHETIC_COOKIE_VALUE}\n"
         f"Authorization: Bearer {SYNTHETIC_CREDENTIAL}\n"
         f"X-Auth-Token: {SYNTHETIC_HEADER_SECRET_VALUE}\n"
-        f'{{"token":"{SYNTHETIC_JSON_ACCESS_TOKEN}"}}\n',
+        f'{{"token":"{SYNTHETIC_JSON_ACCESS_TOKEN}"}}\n'
+        "Content-Type: application/x-www-form-urlencoded\n"
+        "\n"
+        f"access_token={SYNTHETIC_FORM_ACCESS_TOKEN}\n",
         encoding="utf-8",
     )
 
@@ -223,6 +246,7 @@ def test_sanitize_dry_run_reports_counts_without_creating_output(
     assert "cookie.value: 1" in output
     assert "header.secret: 1" in output
     assert "json.value: 1" in output
+    assert "form.value: 1" in output
     assert "token:" not in output
     assert not output_path.exists()
 

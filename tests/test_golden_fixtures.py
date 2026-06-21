@@ -13,6 +13,7 @@ from evidence_sanitizer.sanitizer import (
     REDACTION_MARKER_AUTHORIZATION_CREDENTIALS,
     REDACTION_MARKER_COOKIE_HEADER,
     REDACTION_MARKER_COOKIE_VALUE,
+    REDACTION_MARKER_FORM_VALUE,
     REDACTION_MARKER_HEADER_SECRET,
     REDACTION_MARKER_JSON_VALUE,
     REDACTION_MARKER_QUERY_SECRET,
@@ -30,6 +31,7 @@ FIXTURE_NAMES = (
     "report_note_mixed",
     "edge_cases_markers_and_malformed_cookie",
     "json_api_body_mixed",
+    "form_urlencoded_body_mixed",
 )
 
 EXPECTED_COUNTS = {
@@ -69,6 +71,11 @@ EXPECTED_COUNTS = {
     "json_api_body_mixed": {
         "authorization.bearer": 1,
         "json.value": 6,
+    },
+    "form_urlencoded_body_mixed": {
+        "authorization.bearer": 1,
+        "form.value": 10,
+        "query.secret": 1,
     },
 }
 
@@ -120,6 +127,19 @@ RAW_SECRET_VALUES = {
         "synthetic-password",
         "synthetic-api-key",
     ),
+    "form_urlencoded_body_mixed": (
+        "synthetic-bearer-token",
+        "synthetic-access-token",
+        "synthetic-refresh-token",
+        "synthetic-client-secret",
+        "synthetic-password",
+        "synthetic-csrf-token",
+        "synthetic-jwt-plus+value",
+        "synthetic-api-key",
+        "synthetic-nested-access-token",
+        "synthetic-overlap-token",
+        "synthetic-overlap-sig",
+    ),
 }
 
 APPROVED_RULE_IDS = (
@@ -130,6 +150,7 @@ APPROVED_RULE_IDS = (
     | frozenset(EXPECTED_COUNTS["report_note_mixed"].keys())
     | frozenset(EXPECTED_COUNTS["edge_cases_markers_and_malformed_cookie"].keys())
     | frozenset(EXPECTED_COUNTS["json_api_body_mixed"].keys())
+    | frozenset(EXPECTED_COUNTS["form_urlencoded_body_mixed"].keys())
 )
 
 APPROVED_MARKERS = frozenset(
@@ -142,6 +163,7 @@ APPROVED_MARKERS = frozenset(
         REDACTION_MARKER_HEADER_SECRET,
         REDACTION_MARKER_QUERY_SECRET,
         REDACTION_MARKER_JSON_VALUE,
+        REDACTION_MARKER_FORM_VALUE,
     )
 )
 

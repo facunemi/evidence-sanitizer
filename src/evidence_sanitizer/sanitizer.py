@@ -17,6 +17,7 @@ RULE_ID_COOKIE_HEADER = "cookie.header"
 RULE_ID_HEADER_SECRET = "header.secret"
 RULE_ID_QUERY_SECRET = "query.secret"
 RULE_ID_JSON_VALUE = "json.value"
+RULE_ID_FORM_VALUE = "form.value"
 
 REDACTION_MARKER_AUTHORIZATION_BEARER = "<REDACTED:authorization.bearer>"
 REDACTION_MARKER_AUTHORIZATION_BASIC = "<REDACTED:authorization.basic>"
@@ -26,6 +27,7 @@ REDACTION_MARKER_COOKIE_HEADER = "<REDACTED:cookie.header>"
 REDACTION_MARKER_HEADER_SECRET = "<REDACTED:header.secret>"
 REDACTION_MARKER_QUERY_SECRET = "<REDACTED:query.secret>"
 REDACTION_MARKER_JSON_VALUE = "<REDACTED:json.value>"
+REDACTION_MARKER_FORM_VALUE = "<REDACTED:form.value>"
 COOKIE_REDACTION_MARKER_PREFIX = "<REDACTED:cookie."
 REDACTION_MARKER = REDACTION_MARKER_AUTHORIZATION_BEARER
 APPROVED_REDACTION_MARKERS = frozenset(
@@ -43,6 +45,7 @@ APPROVED_COOKIE_REDACTION_MARKERS = frozenset(
 )
 APPROVED_QUERY_REDACTION_MARKERS = frozenset((REDACTION_MARKER_QUERY_SECRET,))
 APPROVED_JSON_REDACTION_MARKERS = frozenset((REDACTION_MARKER_JSON_VALUE,))
+APPROVED_FORM_REDACTION_MARKERS = frozenset((REDACTION_MARKER_FORM_VALUE,))
 COOKIE_HEADER_NAME = "Cookie"
 HTTP_TOKEN_CHARACTERS = frozenset(
     "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -220,6 +223,59 @@ SENSITIVE_JSON_FIELD_NAMES = frozenset(
         "samlresponse",
     )
 )
+SENSITIVE_FORM_FIELD_NAMES = frozenset(
+    (
+        "access_token",
+        "accesstoken",
+        "auth_token",
+        "authtoken",
+        "id_token",
+        "idtoken",
+        "jwt",
+        "refresh_token",
+        "refreshtoken",
+        "session",
+        "session_id",
+        "sessionid",
+        "sid",
+        "token",
+        "api-key",
+        "api_key",
+        "apikey",
+        "x_api_key",
+        "xapikey",
+        "client_secret",
+        "clientsecret",
+        "shared_secret",
+        "sharedsecret",
+        "private_key",
+        "privatekey",
+        "password",
+        "passwd",
+        "pwd",
+        "client_assertion",
+        "clientassertion",
+        "saml_response",
+        "samlresponse",
+        "sig",
+        "signature",
+        "x-amz-credential",
+        "x-amz-security-token",
+        "x-amz-signature",
+        "x-goog-credential",
+        "x-goog-signature",
+        "x_amz_signature",
+        "xamzsignature",
+        "x_goog_signature",
+        "xgoogsignature",
+        "csrf",
+        "csrf_token",
+        "xsrf",
+        "xsrf_token",
+    )
+)
+_FORM_CONTENT_TYPE_HEADER_NAME = "content-type"
+_FORM_CONTENT_TYPE_MEDIA_TYPE = "application/x-www-form-urlencoded"
 _QUERY_TOKEN_TERMINATORS = frozenset(" \t\r\n\"'`#<>")
 _QUERY_TOKEN_BOUNDARIES = frozenset(" \t\r\n\"'`<>")
 
@@ -714,6 +770,123 @@ def _find_json_field_values(
     return tuple(findings)
 
 
+def _is_form_content_type_line(line: str) -> bool:
+    """Return whether a physical line is a supported form-urlencoded Content-Type."""
+    header_name = _FORM_CONTENT_TYPE_HEADER_NAME
+    if len(line) < len(header_name):
+        return False
+    if line[: len(header_name)].lower() != header_name:
+        return False
+
+    position = len(header_name)
+    while position < len(line) and line[position] in " \t":
+        position += 1
+    if position >= len(line) or line[position] != ":":
+        return False
+
+    position += 1
+    while position < len(line) and line[position] in " \t":
+        position += 1
+
+    media_type = _FORM_CONTENT_TYPE_MEDIA_TYPE
+    if len(line) < position + len(media_type):
+        return False
+    if line[position : position + len(media_type)].lower() != media_type:
+        return False
+
+    position += len(media_type)
+    while position < len(line) and line[position] in " \t":
+        position += 1
+    if position == len(line):
+        return True
+    if line[position] == ";":
+        return True
+
+    return False
+
+
+def _find_form_urlencoded_values(
+    text: str, existing_findings: Sequence[Finding]
+) -> tuple[Finding, ...]:
+    """Find approved sensitive form-urlencoded field values for milestone 10."""
+    findings: list[Finding] = []
+    existing_sorted = sorted(existing_findings, key=lambda item: item.start)
+    lines = _iter_physical_lines(text)
+    processed_body_starts: set[int] = set()
+
+    for content_type_index, (line_start, line_content_end, _) in enumerate(lines):
+        line = text[line_start:line_content_end]
+        if not _is_form_content_type_line(line):
+            continue
+
+        separator_index = None
+        for index in range(content_type_index + 1, len(lines)):
+            candidate_start, candidate_end, _ = lines[index]
+            if candidate_start == candidate_end:
+                separator_index = index
+                break
+
+        if separator_index is None:
+            continue
+
+        body_index = separator_index + 1
+        if body_index >= len(lines):
+            continue
+
+        body_start, body_end, _ = lines[body_index]
+        if body_start == body_end:
+            continue
+
+        if body_start in processed_body_starts:
+            continue
+        processed_body_starts.add(body_start)
+
+        body_line = text[body_start:body_end]
+        position = 0
+        while position < len(body_line):
+            segment_start = position
+            amp_index = body_line.find("&", position)
+            if amp_index == -1:
+                segment_end = len(body_line)
+                position = segment_end
+            else:
+                segment_end = amp_index
+                position = amp_index + 1
+
+            equals_index = body_line.find("=", segment_start, segment_end)
+            if equals_index == -1:
+                continue
+
+            name = body_line[segment_start:equals_index]
+            if _ascii_lower(name) not in SENSITIVE_FORM_FIELD_NAMES:
+                continue
+
+            value_start = equals_index + 1
+            value_end = segment_end
+            value = body_line[value_start:value_end]
+
+            if value == REDACTION_MARKER_FORM_VALUE:
+                continue
+
+            absolute_start = body_start + value_start
+            absolute_end = body_start + value_end
+            if _overlaps_existing_finding(
+                absolute_start, absolute_end, existing_sorted
+            ):
+                continue
+
+            findings.append(
+                Finding(
+                    rule_id=RULE_ID_FORM_VALUE,
+                    start=absolute_start,
+                    end=absolute_end,
+                    replacement=REDACTION_MARKER_FORM_VALUE,
+                )
+            )
+
+    return tuple(findings)
+
+
 def _iter_physical_lines(text: str) -> tuple[tuple[int, int, int], ...]:
     """Return physical lines as start, content end, and next-line start."""
     lines: list[tuple[int, int, int]] = []
@@ -961,9 +1134,11 @@ def sanitize_text(text: str) -> tuple[str, SanitizationReport]:
         + find_cookie_values(text)
         + _find_sensitive_header_values(text)
     )
-    query_findings = _find_query_parameter_values(text, existing_findings)
-    json_findings = _find_json_field_values(text, existing_findings + query_findings)
-    findings = existing_findings + query_findings + json_findings
+    form_findings = _find_form_urlencoded_values(text, existing_findings)
+    broader_findings = existing_findings + form_findings
+    query_findings = _find_query_parameter_values(text, broader_findings)
+    json_findings = _find_json_field_values(text, broader_findings + query_findings)
+    findings = broader_findings + query_findings + json_findings
     sanitized = apply_findings(text, findings)
     counts: dict[str, int] = {}
     for finding in findings:

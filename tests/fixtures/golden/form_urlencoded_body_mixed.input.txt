@@ -1,0 +1,12 @@
+POST /oauth/token HTTP/1.1
+Host: api.example.test
+Authorization: Bearer synthetic-bearer-token
+Content-Type: application/x-www-form-urlencoded
+
+access_token=synthetic-access-token&refresh_token=synthetic-refresh-token&client_secret=synthetic-client-secret&password=synthetic-password&csrf=synthetic-csrf-token&session=&jwt=synthetic-jwt-plus+value&api_key=synthetic-api-key&grant_type=authorization_code&username=synthetic-username&scope=openid&code=synthetic-code&state=synthetic-state&nonce=synthetic-nonce&access%5Ftoken=synthetic-percent-name-token&redirect_uri=https://callback.example.test/cb?access_token=synthetic-nested-access-token
+
+POST /api/login HTTP/1.1
+Host: example.test
+Content-Type: application/x-www-form-urlencoded
+
+token=https://api.example.test/cb?token=synthetic-overlap-token&sig=synthetic-overlap-sig

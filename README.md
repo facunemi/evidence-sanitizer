@@ -22,6 +22,7 @@ The current rule families cover common HTTP-style evidence:
 | `header.secret` | `<REDACTED:header.secret>` | Selected sensitive API/auth header values |
 | `query.secret` | `<REDACTED:query.secret>` | Selected sensitive URL query parameter values |
 | `json.value` | `<REDACTED:json.value>` | String values of approved sensitive JSON field names |
+| `form.value` | `<REDACTED:form.value>` | Raw values of approved sensitive form-urlencoded field names |
 
 Reports use fixed rule IDs and counts only. They never include raw detected values, source excerpts, field names, or custom names.
 
@@ -154,6 +155,26 @@ Output:
 
 Only direct string values of approved field names are redacted. Numbers, booleans, null, arrays, and object values are left unchanged. Existing broader findings such as `Authorization: Bearer` remain authoritative.
 
+### Form-URL-Encoded Bodies
+
+Input:
+
+```http
+Content-Type: application/x-www-form-urlencoded
+
+access_token=synthetic-token&client_secret=synthetic-secret&grant_type=authorization_code
+```
+
+Output:
+
+```http
+Content-Type: application/x-www-form-urlencoded
+
+access_token=<REDACTED:form.value>&client_secret=<REDACTED:form.value>&grant_type=authorization_code
+```
+
+Form scanning is gated by a line-start `Content-Type: application/x-www-form-urlencoded` header followed by a blank separator line. Only the immediate first physical line after the separator is scanned. Deferred names such as `grant_type`, `scope`, `code`, and `username` remain unchanged. No percent-decoding or plus-decoding is performed.
+
 ### Golden Fixtures
 
 The repository includes synthetic golden fixtures under `tests/fixtures/golden/`. Each fixture pairs an `.input.txt` file with a matching `.expected.txt` file showing the sanitized output.
@@ -167,6 +188,7 @@ These fixtures use reserved domains such as `example.test`, `api.example.test`, 
 - `report_note_mixed` - human-written notes mixing prose and snippets.
 - `edge_cases_markers_and_malformed_cookie` - idempotence, markers, malformed Cookie fallback, and overlap behavior.
 - `json_api_body_mixed` - JSON body with sensitive field values and an overlapping Authorization header.
+- `form_urlencoded_body_mixed` - form-urlencoded bodies with approved fields, deferred fields, nested query overlap, and idempotence.
 
 ## CLI Usage
 
@@ -212,12 +234,16 @@ Reports contain only fixed rule IDs and counts. They never include detected valu
 
 This tool is best-effort within its documented rules. Unsupported formats and patterns may retain secrets, including but not limited to:
 
-- Form-urlencoded body parsing.
 - Multipart parsing.
 - XML parsing.
 - HTML/JavaScript parsing.
 - Full JSON parsing, validation, or reserialization; JSON support is conservative raw JSON-like string-key/string-value scanning.
 - Non-string direct JSON values such as numbers, booleans, null, arrays, or objects. Nested approved string fields may still redact when matched as their own JSON-like pairs.
+- Form scanning is Content-Type-gated to `application/x-www-form-urlencoded`; raw form strings without a supported Content-Type line are not scanned.
+- Only the immediate first physical line after the blank header/body separator is scanned; multi-line or wrapped form bodies are not supported.
+- No percent-decoding or plus-decoding of form field names or values.
+- Semicolon-separated form fields are not supported; `&` is the only form separator.
+- No full HTTP parser, Content-Length-based body parsing, or chunked-transfer decoding.
 - Recursive URL parsing.
 - URL decoding or re-encoding.
 - Percent-encoded query parameter names.
@@ -245,7 +271,6 @@ git diff --check
 
 Potential future work:
 
-- Form-urlencoded sensitive fields
 - Proxy-Authorization and selected signature headers
 - Optional JSON report output
 

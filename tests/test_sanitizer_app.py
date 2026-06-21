@@ -18,6 +18,7 @@ from evidence_sanitizer.sanitizer import (
     REDACTION_MARKER_AUTHORIZATION_CREDENTIALS,
     REDACTION_MARKER_COOKIE_HEADER,
     REDACTION_MARKER_COOKIE_VALUE,
+    REDACTION_MARKER_FORM_VALUE,
     REDACTION_MARKER_HEADER_SECRET,
     REDACTION_MARKER_JSON_VALUE,
     REDACTION_MARKER_QUERY_SECRET,
@@ -26,6 +27,7 @@ from evidence_sanitizer.sanitizer import (
     RULE_ID_AUTHORIZATION_OTHER,
     RULE_ID_COOKIE_HEADER,
     RULE_ID_COOKIE_VALUE,
+    RULE_ID_FORM_VALUE,
     RULE_ID_HEADER_SECRET,
     RULE_ID_JSON_VALUE,
     RULE_ID_QUERY_SECRET,
@@ -53,6 +55,12 @@ QUERY_EMBEDDED = f"prefix{REDACTION_MARKER_QUERY_SECRET}suffix"
 QUERY_NEAR_MISS = "synthetic-query-near-miss"
 JSON_ACCESS_TOKEN = "synthetic-json-access-token"
 JSON_PASSWORD = "synthetic-json-password"
+FORM_ACCESS_TOKEN = "synthetic-form-access-token"
+FORM_CLIENT_SECRET = "synthetic-form-client-secret"
+FORM_PASSWORD = "synthetic-form-password"
+FORM_EMPTY_VALUE = ""
+FORM_JWT_PLUS_VALUE = "synthetic-form-jwt-plus+value"
+FORM_NESTED_QUERY_TOKEN = "synthetic-form-nested-query-token"
 SENSITIVE_VALUES = (
     TOKEN,
     BASIC_TOKEN,
@@ -72,6 +80,11 @@ SENSITIVE_VALUES = (
     QUERY_EMBEDDED,
     JSON_ACCESS_TOKEN,
     JSON_PASSWORD,
+    FORM_ACCESS_TOKEN,
+    FORM_CLIENT_SECRET,
+    FORM_PASSWORD,
+    FORM_JWT_PLUS_VALUE,
+    FORM_NESTED_QUERY_TOKEN,
 )
 
 
@@ -219,6 +232,14 @@ def test_milestone_9_combined_rule_integration(tmp_path: Path) -> None:
         f"?access_token_expires={QUERY_NEAR_MISS}\n"
         f'Body: {{"access_token":"{JSON_ACCESS_TOKEN}",'
         f'"password":"{JSON_PASSWORD}","user_id":"user-123"}}\n'
+        "Content-Type: application/x-www-form-urlencoded\n"
+        "\n"
+        f"access_token={FORM_ACCESS_TOKEN}&client_secret={FORM_CLIENT_SECRET}"
+        f"&password={FORM_PASSWORD}&session={FORM_EMPTY_VALUE}"
+        f"&jwt={FORM_JWT_PLUS_VALUE}"
+        f"&token=https://api.example.test/cb?token={FORM_NESTED_QUERY_TOKEN}"
+        "&grant_type=authorization_code&username=synthetic-form-username"
+        "&scope=openid\n"
     ).encode()
     expected = (
         "GET /oauth/callback?"
@@ -246,6 +267,16 @@ def test_milestone_9_combined_rule_integration(tmp_path: Path) -> None:
         f"?access_token_expires={QUERY_NEAR_MISS}\n"
         f'Body: {{"access_token":"{REDACTION_MARKER_JSON_VALUE}",'
         f'"password":"{REDACTION_MARKER_JSON_VALUE}","user_id":"user-123"}}\n'
+        "Content-Type: application/x-www-form-urlencoded\n"
+        "\n"
+        f"access_token={REDACTION_MARKER_FORM_VALUE}"
+        f"&client_secret={REDACTION_MARKER_FORM_VALUE}"
+        f"&password={REDACTION_MARKER_FORM_VALUE}"
+        f"&session={REDACTION_MARKER_FORM_VALUE}"
+        f"&jwt={REDACTION_MARKER_FORM_VALUE}"
+        f"&token={REDACTION_MARKER_FORM_VALUE}"
+        "&grant_type=authorization_code&username=synthetic-form-username"
+        "&scope=openid\n"
     ).encode()
     input_path.write_bytes(source)
 
@@ -261,6 +292,7 @@ def test_milestone_9_combined_rule_integration(tmp_path: Path) -> None:
         RULE_ID_HEADER_SECRET: 1,
         RULE_ID_QUERY_SECRET: 9,
         RULE_ID_JSON_VALUE: 2,
+        RULE_ID_FORM_VALUE: 6,
     }
     assert_sanitized_output(output_path, expected)
     assert_source_unchanged(input_path, source)
@@ -292,6 +324,7 @@ def test_milestone_9_combined_rule_integration(tmp_path: Path) -> None:
         RULE_ID_HEADER_SECRET: 1,
         RULE_ID_QUERY_SECRET: 9,
         RULE_ID_JSON_VALUE: 2,
+        RULE_ID_FORM_VALUE: 6,
     }
 
 
