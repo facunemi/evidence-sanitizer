@@ -1,5 +1,7 @@
 # evidence-sanitizer
 
+[![CI](https://github.com/facunemi/evidence-sanitizer/actions/workflows/ci.yml/badge.svg)](https://github.com/facunemi/evidence-sanitizer/actions/workflows/ci.yml)
+
 Local-first CLI for sanitizing authorized pentest evidence before pasting it into reports, tickets, notes, PoCs, or sharing it internally.
 
 ## Why This Exists
