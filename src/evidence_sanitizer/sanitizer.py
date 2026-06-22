@@ -41,6 +41,12 @@ RULE_ID_JSON_VALUE = "json.value"
 
 RULE_ID_FORM_VALUE = "form.value"
 
+RULE_ID_PROXY_AUTHORIZATION_BEARER = "proxy_authorization.bearer"
+
+RULE_ID_PROXY_AUTHORIZATION_BASIC = "proxy_authorization.basic"
+
+RULE_ID_PROXY_AUTHORIZATION_OTHER = "proxy_authorization.other"
+
 
 # --- Marker constants and approved-marker sets ---
 
@@ -61,6 +67,14 @@ REDACTION_MARKER_QUERY_SECRET = "<REDACTED:query.secret>"
 REDACTION_MARKER_JSON_VALUE = "<REDACTED:json.value>"
 
 REDACTION_MARKER_FORM_VALUE = "<REDACTED:form.value>"
+
+REDACTION_MARKER_PROXY_AUTHORIZATION_BEARER = "<REDACTED:proxy_authorization.bearer>"
+
+REDACTION_MARKER_PROXY_AUTHORIZATION_BASIC = "<REDACTED:proxy_authorization.basic>"
+
+REDACTION_MARKER_PROXY_AUTHORIZATION_CREDENTIALS = (
+    "<REDACTED:proxy_authorization.credentials>"
+)
 
 COOKIE_REDACTION_MARKER_PREFIX = "<REDACTED:cookie."
 
@@ -86,6 +100,14 @@ APPROVED_QUERY_REDACTION_MARKERS = frozenset((REDACTION_MARKER_QUERY_SECRET,))
 APPROVED_JSON_REDACTION_MARKERS = frozenset((REDACTION_MARKER_JSON_VALUE,))
 
 APPROVED_FORM_REDACTION_MARKERS = frozenset((REDACTION_MARKER_FORM_VALUE,))
+
+APPROVED_PROXY_AUTHORIZATION_REDACTION_MARKERS = frozenset(
+    (
+        REDACTION_MARKER_PROXY_AUTHORIZATION_BEARER,
+        REDACTION_MARKER_PROXY_AUTHORIZATION_BASIC,
+        REDACTION_MARKER_PROXY_AUTHORIZATION_CREDENTIALS,
+    )
+)
 
 
 # --- Cookie classification constants and name sets ---
@@ -335,6 +357,8 @@ SENSITIVE_FORM_FIELD_NAMES = frozenset(
 
 COOKIE_HEADER_NAME = "Cookie"
 
+PROXY_AUTHORIZATION_HEADER_NAME = "Proxy-Authorization"
+
 HTTP_TOKEN_CHARACTERS = frozenset(
     "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 )
@@ -462,13 +486,13 @@ def _skip_redaction_marker(text: str, position: int) -> int:
 
 
 def _overlaps_existing_finding(
-    start: int, end: int, existing_findings: Sequence[Finding]
+    start: int, end: int, existing_spans: Sequence[tuple[int, int]]
 ) -> bool:
-    """Return whether a span intersects any existing finding."""
-    for finding in existing_findings:
-        if finding.end <= start:
+    """Return whether a span intersects any existing span."""
+    for span_start, span_end in existing_spans:
+        if span_end <= start:
             continue
-        if finding.start >= end:
+        if span_start >= end:
             break
         return True
     return False
@@ -785,6 +809,11 @@ def _is_unsupported_cookie_control(character: str) -> bool:
 # --- Sensitive header rule finder ---
 
 
+_EXCLUDED_SENSITIVE_HEADER_NAMES = frozenset(
+    ("authorization", "cookie", "set-cookie", "proxy-authorization")
+)
+
+
 def _find_sensitive_header_values(text: str) -> tuple[Finding, ...]:
     """Find selected sensitive HTTP-like header values."""
     findings: list[Finding] = []
@@ -796,7 +825,10 @@ def _find_sensitive_header_values(text: str) -> tuple[Finding, ...]:
             position += 1
 
         header_name = line[:position]
-        if header_name.lower() not in _SENSITIVE_HEADER_NAMES:
+        header_name_lower = header_name.lower()
+        if header_name_lower in _EXCLUDED_SENSITIVE_HEADER_NAMES:
+            continue
+        if header_name_lower not in _SENSITIVE_HEADER_NAMES:
             continue
 
         while position < len(line) and line[position] in " \t":
@@ -833,6 +865,86 @@ def _find_sensitive_header_values(text: str) -> tuple[Finding, ...]:
     return tuple(findings)
 
 
+# --- Proxy-Authorization rule finder and helpers ---
+
+
+def _find_proxy_authorization_credentials(text: str) -> tuple[Finding, ...]:
+    """Find exact line-start Proxy-Authorization header credentials."""
+    findings: list[Finding] = []
+    header_name = PROXY_AUTHORIZATION_HEADER_NAME
+    header_name_length = len(header_name)
+
+    for line_start, line_content_end, next_line_start in _iter_physical_lines(text):
+        line = text[line_start:line_content_end]
+        if len(line) < header_name_length:
+            continue
+        if line[:header_name_length].lower() != header_name.lower():
+            continue
+
+        if next_line_start < len(text) and text[next_line_start] in " \t":
+            continue
+
+        position = header_name_length
+        while position < len(line) and line[position] in " \t":
+            position += 1
+        if position >= len(line) or line[position] != ":":
+            continue
+
+        position += 1
+        while position < len(line) and line[position] in " \t":
+            position += 1
+
+        scheme_start = position
+        while position < len(line) and line[position] in HTTP_TOKEN_CHARACTERS:
+            position += 1
+        scheme = line[scheme_start:position]
+        if not scheme:
+            continue
+
+        if position >= len(line) or line[position] not in " \t":
+            continue
+        while position < len(line) and line[position] in " \t":
+            position += 1
+
+        credential_start_in_line = position
+        credential_section = line[credential_start_in_line:]
+        credential = credential_section.rstrip(" \t")
+        if (
+            not credential
+            or credential in APPROVED_PROXY_AUTHORIZATION_REDACTION_MARKERS
+        ):
+            continue
+
+        scheme_lower = scheme.lower()
+        credential_start = line_start + credential_start_in_line
+        credential_end = credential_start + len(credential)
+
+        if scheme_lower == "bearer":
+            if not _is_single_credential_token(credential):
+                continue
+            rule_id = RULE_ID_PROXY_AUTHORIZATION_BEARER
+            replacement = REDACTION_MARKER_PROXY_AUTHORIZATION_BEARER
+        elif scheme_lower == "basic":
+            if not _is_single_credential_token(credential):
+                continue
+            rule_id = RULE_ID_PROXY_AUTHORIZATION_BASIC
+            replacement = REDACTION_MARKER_PROXY_AUTHORIZATION_BASIC
+        else:
+            rule_id = RULE_ID_PROXY_AUTHORIZATION_OTHER
+            replacement = REDACTION_MARKER_PROXY_AUTHORIZATION_CREDENTIALS
+
+        findings.append(
+            Finding(
+                rule_id=rule_id,
+                start=credential_start,
+                end=credential_end,
+                replacement=replacement,
+            )
+        )
+
+    return tuple(findings)
+
+
 # --- Query parameter rule finder and helpers ---
 
 
@@ -850,11 +962,17 @@ def _skip_to_query_token_end(text: str, position: int) -> int:
 
 
 def _find_query_parameter_values(
-    text: str, existing_findings: Sequence[Finding]
+    text: str,
+    existing_findings: Sequence[Finding],
+    protected_spans: Sequence[tuple[int, int]] = (),
 ) -> tuple[Finding, ...]:
     """Find approved raw URL query parameter values for milestone 6."""
     findings: list[Finding] = []
-    existing_sorted = sorted(existing_findings, key=lambda item: item.start)
+    existing_sorted = sorted(
+        [(finding.start, finding.end) for finding in existing_findings]
+        + list(protected_spans),
+        key=lambda item: item[0],
+    )
     position = 0
 
     while position < len(text):
@@ -1018,11 +1136,17 @@ def _find_balanced_json_like_value_end(text: str, start: int) -> int | None:
 
 
 def _find_json_field_values(
-    text: str, existing_findings: Sequence[Finding]
+    text: str,
+    existing_findings: Sequence[Finding],
+    protected_spans: Sequence[tuple[int, int]] = (),
 ) -> tuple[Finding, ...]:
     """Find approved sensitive JSON-like string field values."""
     findings: list[Finding] = []
-    existing_sorted = sorted(existing_findings, key=lambda item: item.start)
+    existing_sorted = sorted(
+        [(finding.start, finding.end) for finding in existing_findings]
+        + list(protected_spans),
+        key=lambda item: item[0],
+    )
     position = 0
 
     while position < len(text):
@@ -1122,11 +1246,17 @@ def _is_form_content_type_line(line: str) -> bool:
 
 
 def _find_form_urlencoded_values(
-    text: str, existing_findings: Sequence[Finding]
+    text: str,
+    existing_findings: Sequence[Finding],
+    protected_spans: Sequence[tuple[int, int]] = (),
 ) -> tuple[Finding, ...]:
     """Find approved sensitive form-urlencoded field values for milestone 10."""
     findings: list[Finding] = []
-    existing_sorted = sorted(existing_findings, key=lambda item: item.start)
+    existing_sorted = sorted(
+        [(finding.start, finding.end) for finding in existing_findings]
+        + list(protected_spans),
+        key=lambda item: item[0],
+    )
     lines = _iter_physical_lines(text)
     processed_body_starts: set[int] = set()
 
@@ -1228,17 +1358,76 @@ def apply_findings(text: str, findings: Sequence[Finding]) -> str:
 # --- Core sanitization ---
 
 
+def _find_folded_proxy_authorization_spans(
+    text: str,
+) -> tuple[tuple[int, int], ...]:
+    """Return spans of folded Proxy-Authorization headers for overlap protection.
+
+    These spans are used only to prevent later form/query/JSON scanners from
+    redacting inside folded Proxy-Authorization headers. They do not produce
+    findings themselves.
+    """
+    spans: list[tuple[int, int]] = []
+    header_name = PROXY_AUTHORIZATION_HEADER_NAME
+    header_name_length = len(header_name)
+    lines = _iter_physical_lines(text)
+
+    for index, (line_start, line_content_end, next_line_start) in enumerate(lines):
+        line = text[line_start:line_content_end]
+        if len(line) < header_name_length:
+            continue
+        if line[:header_name_length].lower() != header_name.lower():
+            continue
+
+        position = header_name_length
+        while position < len(line) and line[position] in " \t":
+            position += 1
+        if position >= len(line) or line[position] != ":":
+            continue
+
+        if next_line_start >= len(text):
+            continue
+        if text[next_line_start] not in " \t":
+            continue
+
+        span_start = line_start
+        span_end = next_line_start
+        current = index + 1
+        while current < len(lines):
+            _, _, following_start = lines[current]
+            if following_start >= len(text):
+                span_end = len(text)
+                break
+            if text[following_start] not in " \t":
+                span_end = following_start
+                break
+            span_end = following_start
+            current += 1
+
+        spans.append((span_start, span_end))
+
+    return tuple(spans)
+
+
 def sanitize_text(text: str) -> tuple[str, SanitizationReport]:
     """Sanitize decoded text with the approved rules."""
+    folded_proxy_spans = _find_folded_proxy_authorization_spans(text)
     existing_findings = (
         find_authorization_credentials(text)
+        + _find_proxy_authorization_credentials(text)
         + find_cookie_values(text)
         + _find_sensitive_header_values(text)
     )
-    form_findings = _find_form_urlencoded_values(text, existing_findings)
+    form_findings = _find_form_urlencoded_values(
+        text, existing_findings, folded_proxy_spans
+    )
     broader_findings = existing_findings + form_findings
-    query_findings = _find_query_parameter_values(text, broader_findings)
-    json_findings = _find_json_field_values(text, broader_findings + query_findings)
+    query_findings = _find_query_parameter_values(
+        text, broader_findings, folded_proxy_spans
+    )
+    json_findings = _find_json_field_values(
+        text, broader_findings + query_findings, folded_proxy_spans
+    )
     findings = broader_findings + query_findings + json_findings
     sanitized = apply_findings(text, findings)
     counts: dict[str, int] = {}

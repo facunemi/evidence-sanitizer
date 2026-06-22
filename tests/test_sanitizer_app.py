@@ -21,6 +21,9 @@ from evidence_sanitizer.sanitizer import (
     REDACTION_MARKER_FORM_VALUE,
     REDACTION_MARKER_HEADER_SECRET,
     REDACTION_MARKER_JSON_VALUE,
+    REDACTION_MARKER_PROXY_AUTHORIZATION_BASIC,
+    REDACTION_MARKER_PROXY_AUTHORIZATION_BEARER,
+    REDACTION_MARKER_PROXY_AUTHORIZATION_CREDENTIALS,
     REDACTION_MARKER_QUERY_SECRET,
     RULE_ID_AUTHORIZATION_BASIC,
     RULE_ID_AUTHORIZATION_BEARER,
@@ -30,6 +33,9 @@ from evidence_sanitizer.sanitizer import (
     RULE_ID_FORM_VALUE,
     RULE_ID_HEADER_SECRET,
     RULE_ID_JSON_VALUE,
+    RULE_ID_PROXY_AUTHORIZATION_BASIC,
+    RULE_ID_PROXY_AUTHORIZATION_BEARER,
+    RULE_ID_PROXY_AUTHORIZATION_OTHER,
     RULE_ID_QUERY_SECRET,
     SafeError,
     sanitize_file,
@@ -61,6 +67,15 @@ FORM_PASSWORD = "synthetic-form-password"
 FORM_EMPTY_VALUE = ""
 FORM_JWT_PLUS_VALUE = "synthetic-form-jwt-plus+value"
 FORM_NESTED_QUERY_TOKEN = "synthetic-form-nested-query-token"
+PROXY_BEARER_TOKEN = "synthetic-proxy-bearer-token"
+PROXY_BASIC_TOKEN = "synthetic-proxy-basic-token+/="
+PROXY_DIGEST_CREDENTIAL = (
+    'username="synthetic-proxy-user", realm="api", '
+    'nonce="synthetic-proxy-nonce", response="synthetic-proxy-response"'
+)
+PROXY_NESTED_QUERY_TOKEN = "synthetic-proxy-nested-query-token"
+PROXY_NESTED_JSON_TOKEN = "synthetic-proxy-nested-json-token"
+PROXY_NESTED_FORM_TOKEN = "synthetic-proxy-nested-form-token"
 SENSITIVE_VALUES = (
     TOKEN,
     BASIC_TOKEN,
@@ -85,6 +100,12 @@ SENSITIVE_VALUES = (
     FORM_PASSWORD,
     FORM_JWT_PLUS_VALUE,
     FORM_NESTED_QUERY_TOKEN,
+    PROXY_BEARER_TOKEN,
+    PROXY_BASIC_TOKEN,
+    PROXY_DIGEST_CREDENTIAL,
+    PROXY_NESTED_QUERY_TOKEN,
+    PROXY_NESTED_JSON_TOKEN,
+    PROXY_NESTED_FORM_TOKEN,
 )
 
 
@@ -319,6 +340,157 @@ def test_milestone_9_combined_rule_integration(tmp_path: Path) -> None:
         RULE_ID_AUTHORIZATION_BEARER: 1,
         RULE_ID_AUTHORIZATION_BASIC: 1,
         RULE_ID_AUTHORIZATION_OTHER: 1,
+        RULE_ID_COOKIE_VALUE: 1,
+        RULE_ID_COOKIE_HEADER: 1,
+        RULE_ID_HEADER_SECRET: 1,
+        RULE_ID_QUERY_SECRET: 9,
+        RULE_ID_JSON_VALUE: 2,
+        RULE_ID_FORM_VALUE: 6,
+    }
+
+
+def test_milestone_11_combined_rule_integration(tmp_path: Path) -> None:
+    input_path = tmp_path / "evidence.txt"
+    output_path = tmp_path / "evidence.sanitized.txt"
+    second_output_path = tmp_path / "evidence.sanitized-again.txt"
+    source = (
+        f"GET /oauth/callback?access_token={QUERY_ACCESS_TOKEN}"
+        "&state=keep&code=keep HTTP/1.1\n"
+        "Host: example.test\n"
+        f"Authorization: Bearer {TOKEN}\n"
+        f"Authorization: Basic {BASIC_TOKEN}\n"
+        f"Authorization: AMX {CUSTOM_CREDENTIAL}\n"
+        f"Proxy-Authorization: Bearer {PROXY_BEARER_TOKEN}\n"
+        f"Proxy-Authorization: Basic {PROXY_BASIC_TOKEN}\n"
+        f"Proxy-Authorization: Digest {PROXY_DIGEST_CREDENTIAL}\n"
+        f"Cookie: session={COOKIE_SESSION_VALUE}; "
+        f"theme=https://app.test/?sig={QUERY_COOKIE_SIG}\n"
+        f"Cookie: broken={COOKIE_FALLBACK_VALUE}; malformed; "
+        f"theme={COOKIE_FALLBACK_THEME_VALUE}\n"
+        f"Referer: https://app.test/?signature={QUERY_REQUEST_SIG}\n"
+        f"Location: /redirect?token={QUERY_LOCATION_TOKEN}\n"
+        f"X-API-Key: https://api.test/?jwt={QUERY_HEADER_JWT}\n"
+        "Accept: application/json\n"
+        "Proxy-Authorization: Custom "
+        f"https://api.example.test/cb?token={PROXY_NESTED_QUERY_TOKEN}\n"
+        'Proxy-Authorization: Custom {"token":"'
+        f'{PROXY_NESTED_JSON_TOKEN}"}}\n'
+        f"Proxy-Authorization: Basic access_token={PROXY_NESTED_FORM_TOKEN}\n"
+        "Body: https://x.test/?"
+        f"api-key={QUERY_BODY_API_KEY}&"
+        f"client_secret={QUERY_BODY_CLIENT_SECRET}&"
+        f"signature={QUERY_BODY_SIGNATURE}\n"
+        f"?token={REDACTION_MARKER_QUERY_SECRET}\n"
+        f"?token={QUERY_EMBEDDED}\n"
+        f"?token={REDACTION_MARKER_HEADER_SECRET}\n"
+        f"?access_token_expires={QUERY_NEAR_MISS}\n"
+        f'Body: {{"access_token":"{JSON_ACCESS_TOKEN}",'
+        f'"password":"{JSON_PASSWORD}","user_id":"user-123"}}\n'
+        "Content-Type: application/x-www-form-urlencoded\n"
+        "\n"
+        f"access_token={FORM_ACCESS_TOKEN}&client_secret={FORM_CLIENT_SECRET}"
+        f"&password={FORM_PASSWORD}&session={FORM_EMPTY_VALUE}"
+        f"&jwt={FORM_JWT_PLUS_VALUE}"
+        f"&token=https://api.example.test/cb?token={FORM_NESTED_QUERY_TOKEN}"
+        "&grant_type=authorization_code&username=synthetic-form-username"
+        "&scope=openid\n"
+    ).encode()
+    expected = (
+        "GET /oauth/callback?"
+        f"access_token={REDACTION_MARKER_QUERY_SECRET}"
+        "&state=keep&code=keep HTTP/1.1\n"
+        "Host: example.test\n"
+        f"Authorization: Bearer {REDACTION_MARKER}\n"
+        f"Authorization: Basic {REDACTION_MARKER_AUTHORIZATION_BASIC}\n"
+        "Authorization: AMX "
+        f"{REDACTION_MARKER_AUTHORIZATION_CREDENTIALS}\n"
+        "Proxy-Authorization: Bearer "
+        f"{REDACTION_MARKER_PROXY_AUTHORIZATION_BEARER}\n"
+        "Proxy-Authorization: Basic "
+        f"{REDACTION_MARKER_PROXY_AUTHORIZATION_BASIC}\n"
+        "Proxy-Authorization: Digest "
+        f"{REDACTION_MARKER_PROXY_AUTHORIZATION_CREDENTIALS}\n"
+        f"Cookie: session={REDACTION_MARKER_COOKIE_VALUE}; "
+        f"theme=https://app.test/?sig={REDACTION_MARKER_QUERY_SECRET}\n"
+        f"Cookie: {REDACTION_MARKER_COOKIE_HEADER}\n"
+        f"Referer: https://app.test/?signature={REDACTION_MARKER_QUERY_SECRET}\n"
+        f"Location: /redirect?token={REDACTION_MARKER_QUERY_SECRET}\n"
+        f"X-API-Key: {REDACTION_MARKER_HEADER_SECRET}\n"
+        "Accept: application/json\n"
+        "Proxy-Authorization: Custom "
+        f"{REDACTION_MARKER_PROXY_AUTHORIZATION_CREDENTIALS}\n"
+        "Proxy-Authorization: Custom "
+        f"{REDACTION_MARKER_PROXY_AUTHORIZATION_CREDENTIALS}\n"
+        "Proxy-Authorization: Basic "
+        f"{REDACTION_MARKER_PROXY_AUTHORIZATION_BASIC}\n"
+        "Body: https://x.test/?"
+        f"api-key={REDACTION_MARKER_QUERY_SECRET}&"
+        f"client_secret={REDACTION_MARKER_QUERY_SECRET}&"
+        f"signature={REDACTION_MARKER_QUERY_SECRET}\n"
+        f"?token={REDACTION_MARKER_QUERY_SECRET}\n"
+        f"?token={REDACTION_MARKER_QUERY_SECRET}\n"
+        f"?token={REDACTION_MARKER_QUERY_SECRET}\n"
+        f"?access_token_expires={QUERY_NEAR_MISS}\n"
+        f'Body: {{"access_token":"{REDACTION_MARKER_JSON_VALUE}",'
+        f'"password":"{REDACTION_MARKER_JSON_VALUE}","user_id":"user-123"}}\n'
+        "Content-Type: application/x-www-form-urlencoded\n"
+        "\n"
+        f"access_token={REDACTION_MARKER_FORM_VALUE}"
+        f"&client_secret={REDACTION_MARKER_FORM_VALUE}"
+        f"&password={REDACTION_MARKER_FORM_VALUE}"
+        f"&session={REDACTION_MARKER_FORM_VALUE}"
+        f"&jwt={REDACTION_MARKER_FORM_VALUE}"
+        f"&token={REDACTION_MARKER_FORM_VALUE}"
+        "&grant_type=authorization_code&username=synthetic-form-username"
+        "&scope=openid\n"
+    ).encode()
+    input_path.write_bytes(source)
+
+    result = sanitize_file(input_path, output_path, dry_run=False)
+
+    assert result.output_written
+    assert result.report.counts_by_rule == {
+        RULE_ID_AUTHORIZATION_BEARER: 1,
+        RULE_ID_AUTHORIZATION_BASIC: 1,
+        RULE_ID_AUTHORIZATION_OTHER: 1,
+        RULE_ID_PROXY_AUTHORIZATION_BEARER: 1,
+        RULE_ID_PROXY_AUTHORIZATION_BASIC: 2,
+        RULE_ID_PROXY_AUTHORIZATION_OTHER: 3,
+        RULE_ID_COOKIE_VALUE: 1,
+        RULE_ID_COOKIE_HEADER: 1,
+        RULE_ID_HEADER_SECRET: 1,
+        RULE_ID_QUERY_SECRET: 9,
+        RULE_ID_JSON_VALUE: 2,
+        RULE_ID_FORM_VALUE: 6,
+    }
+    assert_sanitized_output(output_path, expected)
+    assert_source_unchanged(input_path, source)
+    for name in (
+        "access_token",
+        "signature",
+        "token",
+        "api-key",
+        "client_secret",
+        "password",
+    ):
+        if any(name in rule_id for rule_id in result.report.counts_by_rule):
+            pytest.fail("report included a dynamic query/header name")
+
+    second_result = sanitize_file(output_path, second_output_path, dry_run=False)
+    assert second_result.report.counts_by_rule == {}
+    assert second_output_path.read_bytes() == output_path.read_bytes()
+
+    dry_run_output_path = tmp_path / "dry-run.sanitized.txt"
+    dry_run_result = sanitize_file(input_path, dry_run_output_path, dry_run=True)
+    assert not dry_run_result.output_written
+    assert not dry_run_output_path.exists()
+    assert dry_run_result.report.counts_by_rule == {
+        RULE_ID_AUTHORIZATION_BEARER: 1,
+        RULE_ID_AUTHORIZATION_BASIC: 1,
+        RULE_ID_AUTHORIZATION_OTHER: 1,
+        RULE_ID_PROXY_AUTHORIZATION_BEARER: 1,
+        RULE_ID_PROXY_AUTHORIZATION_BASIC: 2,
+        RULE_ID_PROXY_AUTHORIZATION_OTHER: 3,
         RULE_ID_COOKIE_VALUE: 1,
         RULE_ID_COOKIE_HEADER: 1,
         RULE_ID_HEADER_SECRET: 1,

@@ -1,0 +1,13 @@
+GET /api/resource HTTP/1.1
+Host: example.test
+Proxy-Authorization: Bearer <REDACTED:proxy_authorization.bearer>
+Proxy-Authorization: Basic <REDACTED:proxy_authorization.basic>
+Proxy-Authorization: Digest <REDACTED:proxy_authorization.credentials>
+Proxy-Authorization: Custom <REDACTED:proxy_authorization.credentials>
+Proxy-Authorization: Custom <REDACTED:proxy_authorization.credentials>
+Proxy-Authorization: Custom <REDACTED:proxy_authorization.credentials>
+Proxy-Authorization: Basic <REDACTED:proxy_authorization.basic>
+Referer: https://app.example.test/?token=<REDACTED:query.secret>
+Proxy-Authenticate: Bearer synthetic-proxy-authenticate-token
+WWW-Authenticate: Bearer synthetic-www-authenticate-token
+X-Proxy-Authorization: Bearer synthetic-x-proxy-token

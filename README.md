@@ -17,6 +17,9 @@ The current rule families cover common HTTP-style evidence:
 | `authorization.bearer` | `<REDACTED:authorization.bearer>` | `Authorization: Bearer` credentials |
 | `authorization.basic` | `<REDACTED:authorization.basic>` | `Authorization: Basic` credentials |
 | `authorization.other` | `<REDACTED:authorization.credentials>` | Other syntactically valid `Authorization` schemes |
+| `proxy_authorization.bearer` | `<REDACTED:proxy_authorization.bearer>` | `Proxy-Authorization: Bearer` credentials |
+| `proxy_authorization.basic` | `<REDACTED:proxy_authorization.basic>` | `Proxy-Authorization: Basic` credentials |
+| `proxy_authorization.other` | `<REDACTED:proxy_authorization.credentials>` | Other syntactically valid `Proxy-Authorization` schemes |
 | `cookie.value` | `<REDACTED:cookie.value>` | Individual `Cookie` values in safely parsed headers |
 | `cookie.header` | `<REDACTED:cookie.header>` | Whole `Cookie` header fallback when safe parsing fails |
 | `header.secret` | `<REDACTED:header.secret>` | Selected sensitive API/auth header values |
@@ -94,6 +97,26 @@ Authorization: Bearer <REDACTED:authorization.bearer>
 Authorization: Basic <REDACTED:authorization.basic>
 Authorization: AMX <REDACTED:authorization.credentials>
 ```
+
+### Proxy-Authorization Headers
+
+Input:
+
+```http
+Proxy-Authorization: Bearer synthetic-proxy-bearer-token
+Proxy-Authorization: Basic synthetic-proxy-basic-token+/=
+Proxy-Authorization: Digest username="synthetic-proxy-user", realm="api"
+```
+
+Output:
+
+```http
+Proxy-Authorization: Bearer <REDACTED:proxy_authorization.bearer>
+Proxy-Authorization: Basic <REDACTED:proxy_authorization.basic>
+Proxy-Authorization: Digest <REDACTED:proxy_authorization.credentials>
+```
+
+Only exact decoded line-start `Proxy-Authorization` headers are matched. `Proxy-Authenticate`, `WWW-Authenticate`, `X-Proxy-Authorization`, and other proxy-related headers remain out of scope.
 
 ### Cookies
 
@@ -189,6 +212,7 @@ These fixtures use reserved domains such as `example.test`, `api.example.test`, 
 - `edge_cases_markers_and_malformed_cookie` - idempotence, markers, malformed Cookie fallback, and overlap behavior.
 - `json_api_body_mixed` - JSON body with sensitive field values and an overlapping Authorization header.
 - `form_urlencoded_body_mixed` - form-urlencoded bodies with approved fields, deferred fields, nested query overlap, and idempotence.
+- `proxy_authorization_mixed` - `Proxy-Authorization` Bearer, Basic, and generic scheme redaction, wrong-family marker handling, nested query/JSON/form suppression, and out-of-scope proxy-related headers.
 
 ## CLI Usage
 
@@ -248,7 +272,7 @@ This tool is best-effort within its documented rules. Unsupported formats and pa
 - URL decoding or re-encoding.
 - Percent-encoded query parameter names.
 - `Set-Cookie` header sanitization.
-- `Proxy-Authorization` sanitization.
+- `Proxy-Authenticate`, `WWW-Authenticate`, `X-Proxy-Authorization`, `Forwarded`, `X-Forwarded-*`, `X-Original-*`, `Via`, and other proxy-related headers beyond exact line-start `Proxy-Authorization`.
 - Folded or indented supported headers, which may remain unchanged.
 - Directory scanning or batch processing.
 - Entropy-based secret detection.
@@ -271,7 +295,7 @@ git diff --check
 
 Potential future work:
 
-- Proxy-Authorization and selected signature headers
+- Additional signature headers
 - Optional JSON report output
 
 Roadmap items are tentative and subject to explicit approval before implementation. They are not current behavior. Unsupported formats may retain secrets until they are explicitly specified, implemented, and tested.

@@ -16,6 +16,9 @@ from evidence_sanitizer.sanitizer import (
     REDACTION_MARKER_FORM_VALUE,
     REDACTION_MARKER_HEADER_SECRET,
     REDACTION_MARKER_JSON_VALUE,
+    REDACTION_MARKER_PROXY_AUTHORIZATION_BASIC,
+    REDACTION_MARKER_PROXY_AUTHORIZATION_BEARER,
+    REDACTION_MARKER_PROXY_AUTHORIZATION_CREDENTIALS,
     REDACTION_MARKER_QUERY_SECRET,
 )
 
@@ -37,6 +40,12 @@ SYNTHETIC_JSON_PASSWORD = "synthetic-json-password"
 SYNTHETIC_FORM_ACCESS_TOKEN = "synthetic-form-access-token"
 SYNTHETIC_FORM_CLIENT_SECRET = "synthetic-form-client-secret"
 SYNTHETIC_FORM_PASSWORD = "synthetic-form-password"
+SYNTHETIC_PROXY_BEARER_TOKEN = "synthetic-proxy-bearer-token"
+SYNTHETIC_PROXY_BASIC_TOKEN = "synthetic-proxy-basic-token+/="
+SYNTHETIC_PROXY_DIGEST_CREDENTIAL = (
+    'username="synthetic-proxy-user", realm="api", '
+    'nonce="synthetic-proxy-nonce", response="synthetic-proxy-response"'
+)
 OUTPUT_FORBIDDEN_VALUES = (
     SYNTHETIC_CREDENTIAL,
     SYNTHETIC_BASIC_CREDENTIAL,
@@ -50,6 +59,9 @@ OUTPUT_FORBIDDEN_VALUES = (
     SYNTHETIC_FORM_ACCESS_TOKEN,
     SYNTHETIC_FORM_CLIENT_SECRET,
     SYNTHETIC_FORM_PASSWORD,
+    SYNTHETIC_PROXY_BEARER_TOKEN,
+    SYNTHETIC_PROXY_BASIC_TOKEN,
+    SYNTHETIC_PROXY_DIGEST_CREDENTIAL,
 )
 CLI_FORBIDDEN_VALUES = OUTPUT_FORBIDDEN_VALUES + (SYNTHETIC_HARMLESS_COOKIE_VALUE,)
 
@@ -155,6 +167,9 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
             f"Authorization: Bearer {SYNTHETIC_CREDENTIAL}\n"
             f"Authorization: Basic {SYNTHETIC_BASIC_CREDENTIAL}\n"
             f"Authorization: AMX {SYNTHETIC_CUSTOM_CREDENTIAL}\n"
+            f"Proxy-Authorization: Bearer {SYNTHETIC_PROXY_BEARER_TOKEN}\n"
+            f"Proxy-Authorization: Basic {SYNTHETIC_PROXY_BASIC_TOKEN}\n"
+            f"Proxy-Authorization: Digest {SYNTHETIC_PROXY_DIGEST_CREDENTIAL}\n"
             f"X-API-Key: {SYNTHETIC_HEADER_SECRET_VALUE}\n"
             "Accept: application/json\n"
             f"Body: https://x.test/?api-key={SYNTHETIC_QUERY_VALUE}\n"
@@ -177,6 +192,12 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
             f"Authorization: Basic {REDACTION_MARKER_AUTHORIZATION_BASIC}\n"
             "Authorization: AMX "
             f"{REDACTION_MARKER_AUTHORIZATION_CREDENTIALS}\n"
+            "Proxy-Authorization: Bearer "
+            f"{REDACTION_MARKER_PROXY_AUTHORIZATION_BEARER}\n"
+            "Proxy-Authorization: Basic "
+            f"{REDACTION_MARKER_PROXY_AUTHORIZATION_BASIC}\n"
+            "Proxy-Authorization: Digest "
+            f"{REDACTION_MARKER_PROXY_AUTHORIZATION_CREDENTIALS}\n"
             f"X-API-Key: {REDACTION_MARKER_HEADER_SECRET}\n"
             "Accept: application/json\n"
             f"Body: https://x.test/?api-key={REDACTION_MARKER_QUERY_SECRET}\n"
@@ -202,6 +223,9 @@ def test_sanitize_success_for_console_and_module_entrypoints(tmp_path: Path) -> 
         assert "authorization.basic: 1" in output
         assert "authorization.bearer: 1" in output
         assert "authorization.other: 1" in output
+        assert "proxy_authorization.bearer: 1" in output
+        assert "proxy_authorization.basic: 1" in output
+        assert "proxy_authorization.other: 1" in output
         assert "cookie.header: 1" in output
         assert "cookie.value: 1" in output
         assert "header.secret: 1" in output

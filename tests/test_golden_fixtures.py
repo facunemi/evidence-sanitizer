@@ -16,6 +16,9 @@ from evidence_sanitizer.sanitizer import (
     REDACTION_MARKER_FORM_VALUE,
     REDACTION_MARKER_HEADER_SECRET,
     REDACTION_MARKER_JSON_VALUE,
+    REDACTION_MARKER_PROXY_AUTHORIZATION_BASIC,
+    REDACTION_MARKER_PROXY_AUTHORIZATION_BEARER,
+    REDACTION_MARKER_PROXY_AUTHORIZATION_CREDENTIALS,
     REDACTION_MARKER_QUERY_SECRET,
     SanitizationReport,
     sanitize_text,
@@ -32,6 +35,7 @@ FIXTURE_NAMES = (
     "edge_cases_markers_and_malformed_cookie",
     "json_api_body_mixed",
     "form_urlencoded_body_mixed",
+    "proxy_authorization_mixed",
 )
 
 EXPECTED_COUNTS = {
@@ -75,6 +79,12 @@ EXPECTED_COUNTS = {
     "form_urlencoded_body_mixed": {
         "authorization.bearer": 1,
         "form.value": 10,
+        "query.secret": 1,
+    },
+    "proxy_authorization_mixed": {
+        "proxy_authorization.bearer": 1,
+        "proxy_authorization.basic": 2,
+        "proxy_authorization.other": 4,
         "query.secret": 1,
     },
 }
@@ -140,6 +150,15 @@ RAW_SECRET_VALUES = {
         "synthetic-overlap-token",
         "synthetic-overlap-sig",
     ),
+    "proxy_authorization_mixed": (
+        "synthetic-proxy-bearer-token",
+        "synthetic-proxy-basic-token+/=",
+        'username="synthetic-proxy-user", realm="api", nonce="abc", response="def"',
+        "synthetic-proxy-nested-query-token",
+        "synthetic-proxy-nested-json-token",
+        "synthetic-proxy-nested-form-token",
+        "synthetic-normal-query-token",
+    ),
 }
 
 APPROVED_RULE_IDS = (
@@ -151,6 +170,7 @@ APPROVED_RULE_IDS = (
     | frozenset(EXPECTED_COUNTS["edge_cases_markers_and_malformed_cookie"].keys())
     | frozenset(EXPECTED_COUNTS["json_api_body_mixed"].keys())
     | frozenset(EXPECTED_COUNTS["form_urlencoded_body_mixed"].keys())
+    | frozenset(EXPECTED_COUNTS["proxy_authorization_mixed"].keys())
 )
 
 APPROVED_MARKERS = frozenset(
@@ -164,6 +184,9 @@ APPROVED_MARKERS = frozenset(
         REDACTION_MARKER_QUERY_SECRET,
         REDACTION_MARKER_JSON_VALUE,
         REDACTION_MARKER_FORM_VALUE,
+        REDACTION_MARKER_PROXY_AUTHORIZATION_BEARER,
+        REDACTION_MARKER_PROXY_AUTHORIZATION_BASIC,
+        REDACTION_MARKER_PROXY_AUTHORIZATION_CREDENTIALS,
     )
 )
 

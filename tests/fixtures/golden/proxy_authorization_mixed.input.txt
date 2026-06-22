@@ -1,0 +1,13 @@
+GET /api/resource HTTP/1.1
+Host: example.test
+Proxy-Authorization: Bearer synthetic-proxy-bearer-token
+Proxy-Authorization: Basic synthetic-proxy-basic-token+/=
+Proxy-Authorization: Digest username="synthetic-proxy-user", realm="api", nonce="abc", response="def"
+Proxy-Authorization: Custom <REDACTED:authorization.bearer>
+Proxy-Authorization: Custom https://proxy.example.test/cb?token=synthetic-proxy-nested-query-token
+Proxy-Authorization: Custom {"token":"synthetic-proxy-nested-json-token"}
+Proxy-Authorization: Basic access_token=synthetic-proxy-nested-form-token
+Referer: https://app.example.test/?token=synthetic-normal-query-token
+Proxy-Authenticate: Bearer synthetic-proxy-authenticate-token
+WWW-Authenticate: Bearer synthetic-www-authenticate-token
+X-Proxy-Authorization: Bearer synthetic-x-proxy-token
