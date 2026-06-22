@@ -1,5 +1,7 @@
 """Behavioral tests for the CLI."""
 
+import os
+import re
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -76,7 +78,9 @@ def run_entrypoint(
     else:
         raise ValueError(f"unknown test entry point: {entrypoint}")
 
-    return subprocess.run(command, capture_output=True, text=True, check=False)
+    env = os.environ.copy()
+    env.setdefault("COLUMNS", "200")
+    return subprocess.run(command, capture_output=True, text=True, check=False, env=env)
 
 
 def combined_output(result: subprocess.CompletedProcess[str]) -> str:
@@ -87,8 +91,16 @@ def normalize_whitespace(text: str) -> str:
     return " ".join(text.split())
 
 
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI SGR escape sequences so assertions work across terminals."""
+    return ANSI_ESCAPE_RE.sub("", text)
+
+
 def assert_help_displayed(result: subprocess.CompletedProcess[str]) -> None:
-    output = combined_output(result)
+    output = strip_ansi(combined_output(result))
     assert result.returncode == 0, output
     assert PRODUCT_DESCRIPTION in normalize_whitespace(output)
     assert "--help" in output
@@ -97,7 +109,7 @@ def assert_help_displayed(result: subprocess.CompletedProcess[str]) -> None:
 def assert_rejected(
     result: subprocess.CompletedProcess[str], expected_text: str
 ) -> None:
-    output = combined_output(result)
+    output = strip_ansi(combined_output(result))
     assert result.returncode != 0, output
     assert expected_text in output
 
@@ -131,7 +143,7 @@ def test_console_script_and_module_help_are_consistent() -> None:
 
     assert console_result.returncode == module_result.returncode == 0
     for result in (console_result, module_result):
-        output = combined_output(result)
+        output = strip_ansi(combined_output(result))
         assert PRODUCT_DESCRIPTION in normalize_whitespace(output)
         assert "--help" in output
 
@@ -144,7 +156,7 @@ def test_no_argument_execution_displays_help_and_exits_zero() -> None:
 def test_sanitize_help_is_available() -> None:
     for entrypoint in ENTRYPOINTS:
         result = run_entrypoint(entrypoint, ["sanitize", "--help"])
-        output = combined_output(result)
+        output = strip_ansi(combined_output(result))
 
         assert result.returncode == 0, output
         assert "sanitize" in output
@@ -298,8 +310,9 @@ def test_sanitize_requires_output_option(tmp_path: Path) -> None:
 
     result = run_entrypoint("console", ["sanitize", str(input_path)])
 
-    assert result.returncode == 2, combined_output(result)
-    assert "output" in combined_output(result).lower()
+    output = strip_ansi(combined_output(result))
+    assert result.returncode == 2, output
+    assert "output" in output.lower()
 
 
 def test_sanitize_rejects_extra_input_argument(tmp_path: Path) -> None:
