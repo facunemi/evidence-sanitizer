@@ -33,11 +33,13 @@ Milestone 5 adds one concrete selected-sensitive-header responsibility. Keep pro
 
 Milestone 6 adds one concrete selected-sensitive-query-parameter responsibility. Keep production behavior in `src/evidence_sanitizer/sanitizer.py` with small private constants for the fixed rule ID, marker, approved parameter-name set, and one private raw query finder. The added responsibility does not justify a `query.py` module, URL parsing dependency, `rules/` package, registry, plugin, configuration file, user-editable policy, recursive parser, dependency injection, inheritance hierarchy, generalized parser framework, new dependency, or new public API.
 
+Milestone 11 adds one concrete Proxy-Authorization-header responsibility. Keep production behavior in `src/evidence_sanitizer/sanitizer.py` with small private constants for dedicated proxy rule IDs, proxy markers, an approved proxy-marker set, and one private line-oriented proxy authorization finder. The added responsibility does not justify a `proxy.py` module, `headers.py` module, `rules/` package, registry, plugin, configuration file, user-editable policy, dependency injection, inheritance hierarchy, generalized parser framework, new dependency, or new public API.
+
 Do not create modules such as `paths.py`, `reporting.py`, `textio.py`, `engine.py`, or `rules/` merely because they might be useful later. Their creation should be justified by concrete implemented responsibilities.
 
 ## Data Flow
 
-Milestone 1 through milestone 10 data flow:
+Milestone 1 through milestone 11 data flow:
 
 1. Typer parses `sanitize INPUT --output OUTPUT [--dry-run]`.
 2. The command validates the input path, output path, and output parent directory.
@@ -46,7 +48,7 @@ Milestone 1 through milestone 10 data flow:
 5. The command reads the complete input file in memory, up to 10 MiB.
 6. The command rejects NUL bytes.
 7. The command decodes strict UTF-8 or UTF-8 with BOM.
-8. The sanitizer applies the approved Authorization-header rule set, the approved Cookie-header rule set in milestone 3 and later, the approved selected-sensitive-header rule set in milestone 5, the approved form-urlencoded-field rule set in milestone 10, the approved selected-sensitive-query-parameter rule set in milestone 6, and the approved selected-sensitive-JSON-like-field rule set in milestone 9.
+8. The sanitizer applies the approved Authorization-header rule set, the approved Proxy-Authorization-header rule set in milestone 11, the approved Cookie-header rule set in milestone 3 and later, the approved selected-sensitive-header rule set in milestone 5, the approved form-urlencoded-field rule set in milestone 10, the approved selected-sensitive-query-parameter rule set in milestone 6, and the approved selected-sensitive-JSON-like-field rule set in milestone 9.
 9. The sanitizer returns sanitized text plus a safe report.
 10. Dry-run mode prints the safe report and writes nothing.
 11. Normal mode creates the output path exclusively and writes the sanitized bytes.
@@ -88,7 +90,7 @@ These are public design concepts, not a requirement to create separate modules o
 
 Findings should store:
 
-- `rule_id`: stable identifier, such as `authorization.bearer`, `authorization.basic`, `authorization.other`, `cookie.value`, `cookie.header`, `header.secret`, `query.secret`, `json.value`, or `form.value`.
+- `rule_id`: stable identifier, such as `authorization.bearer`, `authorization.basic`, `authorization.other`, `proxy_authorization.bearer`, `proxy_authorization.basic`, `proxy_authorization.other`, `cookie.value`, `cookie.header`, `header.secret`, `query.secret`, `json.value`, or `form.value`.
 - `start`: start offset in decoded text.
 - `end`: end offset in decoded text.
 - `replacement`: deterministic replacement text.
@@ -142,6 +144,8 @@ Milestone 6 should continue to stay in `sanitizer.py`. Query-parameter sanitizat
 Milestone 9 should continue to stay in `sanitizer.py`. JSON-like field sanitization should add only small private constants and one private raw JSON-like scanner. It should reuse `Finding`, `SanitizationReport`, `apply_findings`, `sanitize_text`, existing file handling, right-to-left replacement, and overlap protection. No new public data structures or public APIs are required.
 
 Milestone 10 should continue to stay in `sanitizer.py`. Form-urlencoded field sanitization should add only small private constants and one private Content-Type-gated form body finder. It should reuse `Finding`, `SanitizationReport`, `_iter_physical_lines` for line-boundary detection, `apply_findings`, `sanitize_text`, existing file handling, right-to-left replacement, and overlap protection. No new public data structures or public APIs are required.
+
+Milestone 11 should continue to stay in `sanitizer.py`. Proxy-Authorization sanitization should add only small private constants and one private line-oriented finder. It should reuse `Finding`, `SanitizationReport`, `_iter_physical_lines` for line-boundary detection and folded-header checks, `apply_findings`, `sanitize_text`, existing file handling, right-to-left replacement, and overlap protection. No new public data structures or public APIs are required.
 
 ## Encoding And Newline Behavior
 
@@ -255,6 +259,64 @@ Reports should aggregate counts from findings by fixed rule ID only:
 - `authorization.other`
 
 Counts represent one redacted Authorization credential section per matching header line. Reports must not include credential values, source excerpts, replacement previews, or custom scheme names.
+
+## Proxy-Authorization Header Rules
+
+Milestone 11 supports only exact line-start HTTP request `Proxy-Authorization` header lines. It uses dedicated proxy-specific rule IDs and markers so reports distinguish proxy credentials from application/API `Authorization` credentials.
+
+Use small private constants in `sanitizer.py`:
+
+```python
+RULE_ID_PROXY_AUTHORIZATION_BEARER = "proxy_authorization.bearer"
+RULE_ID_PROXY_AUTHORIZATION_BASIC = "proxy_authorization.basic"
+RULE_ID_PROXY_AUTHORIZATION_OTHER = "proxy_authorization.other"
+REDACTION_MARKER_PROXY_AUTHORIZATION_BEARER = "<REDACTED:proxy_authorization.bearer>"
+REDACTION_MARKER_PROXY_AUTHORIZATION_BASIC = "<REDACTED:proxy_authorization.basic>"
+REDACTION_MARKER_PROXY_AUTHORIZATION_CREDENTIALS = "<REDACTED:proxy_authorization.credentials>"
+APPROVED_PROXY_AUTHORIZATION_REDACTION_MARKERS = frozenset(...)
+```
+
+Use one private line-oriented proxy finder, conceptually:
+
+```python
+def _find_proxy_authorization_credentials(text: str) -> tuple[Finding, ...]:
+    ...
+```
+
+The finder should reuse `_iter_physical_lines` so newline detection, final-line behavior, and folded-line checks stay consistent with Cookie and selected sensitive-header finders. For each physical line, it should:
+
+1. Match only a decoded physical line starting at column 0 with `Proxy-Authorization`, matched case-insensitively.
+2. Require optional spaces or tabs, `:`, optional spaces or tabs, a syntactically valid auth scheme, spaces or tabs before credentials, and a credential section.
+3. Preserve header-name casing, spaces and tabs around `:`, scheme casing, spaces and tabs before credentials, trailing spaces and tabs, and line endings.
+4. Use the same ASCII HTTP token character set as Authorization for auth-scheme names.
+5. Skip Unicode schemes and malformed schemes.
+6. Skip empty or whitespace-only values.
+7. Skip folded proxy headers when the next physical line starts with a space or tab.
+8. Emit at most one proxy finding per matched physical line.
+
+The branch behavior mirrors Authorization semantics but uses proxy-specific identifiers and markers:
+
+- Bearer branch: match `Bearer` case-insensitively, require exactly one contiguous non-whitespace credential, replace only the credential with `<REDACTED:proxy_authorization.bearer>`, and use `proxy_authorization.bearer`.
+- Basic branch: match `Basic` case-insensitively, require exactly one contiguous non-whitespace credential, do not Base64-decode or validate, replace only the credential with `<REDACTED:proxy_authorization.basic>`, and use `proxy_authorization.basic`.
+- Generic branch: apply only to syntactically valid schemes other than Bearer and Basic, replace the complete non-empty credential section after the scheme with `<REDACTED:proxy_authorization.credentials>`, and use `proxy_authorization.other`.
+
+Bearer and Basic proxy branches must not fall through to the generic proxy branch when their specialized validation fails. Generic proxy fallback may redact structured schemes such as Digest, Negotiate, NTLM, OAuth, Signature, or custom valid schemes as one whole credential section without parsing individual parameters.
+
+Approved proxy markers are `<REDACTED:proxy_authorization.bearer>`, `<REDACTED:proxy_authorization.basic>`, and `<REDACTED:proxy_authorization.credentials>`. If the complete proxy credential section is exactly any approved proxy marker, the value is already sanitized and produces no finding or count, even when the marker appears under another proxy scheme. The sanitizer must not correct or normalize wrong-proxy-scheme markers. A proxy marker embedded inside a larger raw credential is not already sanitized and must be redacted.
+
+Existing non-proxy markers inside `Proxy-Authorization`, including Authorization, `header.secret`, `query.secret`, `json.value`, `form.value`, and Cookie markers, are treated as raw credentials and re-redacted to the appropriate proxy marker. This preserves precise proxy report semantics instead of silently treating an Authorization marker as a proxy finding.
+
+`Proxy-Authenticate`, `WWW-Authenticate`, `X-Proxy-Authorization`, `Forwarded`, `X-Forwarded-*`, `X-Original-*`, `Via`, `X-API-Key` variants beyond existing `header.secret` behavior, and additional signature headers remain out of scope for milestone 11. Do not add generic header matching, substring matching, full HTTP parsing, folded-header parsing, value decoding, recursive parsing, runtime configuration, plugins, dependencies, CLI options, or output formats.
+
+Proxy findings are broader line/header findings. In `sanitize_text`, collect Authorization findings first, then Proxy-Authorization findings, then Cookie findings, selected sensitive-header findings, form findings, query findings, and JSON findings. Proxy findings must participate in overlap checks for later form, query, and JSON finders. Nested URLs, JSON-like strings, or form-like content inside proxy credentials must not create secondary findings. Normal URL query strings outside proxy credentials still use `query.secret`.
+
+Reports should aggregate proxy counts by fixed rule ID only:
+
+- `proxy_authorization.bearer`
+- `proxy_authorization.basic`
+- `proxy_authorization.other`
+
+Findings store only the fixed rule ID, offsets, and replacement. Reports must not include raw proxy credential values, source excerpts, replacement previews, dynamic header names, proxy credential snippets, or custom proxy scheme names.
 
 ## Cookie Header Rules
 
@@ -474,7 +536,7 @@ The approved header-name set is fixed and exact. No substring matching is allowe
 
 Folded sensitive headers are unsupported. If an exact sensitive header line is immediately followed by a physical line beginning with a space or tab, the finder should leave the complete folded form unchanged and emit no finding. It must not sanitize only the first physical line. Full folded-header parsing remains deferred.
 
-The sensitive-header finder must not match `authorization`, `cookie`, `set-cookie`, or `proxy-authorization`. Existing Authorization and Cookie flows remain unchanged. In `sanitize_text`, collect Authorization findings, Cookie findings, and sensitive-header findings, then apply the combined finding set with the existing right-to-left replacement function. The rules are non-overlapping by construction because they match distinct exact header names. If an overlap is ever produced, keep treating it as an internal sanitization error instead of adding a generalized overlap-resolution system.
+The sensitive-header finder must not match `authorization`, `cookie`, `set-cookie`, or `proxy-authorization`. Existing Authorization, Proxy-Authorization, and Cookie flows remain unchanged. In `sanitize_text`, collect Authorization findings, Proxy-Authorization findings, Cookie findings, and sensitive-header findings before later form/query/JSON findings. The header rules are non-overlapping by construction because they match distinct exact header names. If an overlap is ever produced, keep treating it as an internal sanitization error instead of adding a generalized overlap-resolution system.
 
 Reports should aggregate `header.secret` by fixed rule ID only. Reports must not include raw values, source excerpts, replacement previews, header names as dynamic identifiers, grouped header categories, or per-header identifiers.
 
@@ -529,7 +591,7 @@ Marker handling must be marker-aware so the approved marker's `<` and `>` do not
 
 The query finder must not introduce grouped or per-parameter rule IDs such as `query.token`, `query.api_key`, `query.signature`, or `query.oauth`. Reports should aggregate counts by fixed rule ID `query.secret` only. Parameter names may remain visible in sanitized evidence for URL structure, but they must not be stored in `Finding`, `SanitizationReport`, CLI output, or reports as dynamic identifiers.
 
-Existing findings are authoritative. In `sanitize_text`, collect Authorization findings, Cookie findings, and selected sensitive-header findings first. Query findings should run after those broader finders or otherwise receive the existing finding spans and skip any candidate value span that overlaps them. `apply_findings` remains the final overlap guard. Do not introduce a generalized overlap-resolution system.
+Existing findings are authoritative. In `sanitize_text`, collect Authorization findings, Proxy-Authorization findings, Cookie findings, selected sensitive-header findings, and form findings first. Query findings should run after those broader finders or otherwise receive the existing finding spans and skip any candidate value span that overlaps them. `apply_findings` remains the final overlap guard. Do not introduce a generalized overlap-resolution system.
 
 Examples of overlap behavior:
 
@@ -538,6 +600,12 @@ X-API-Key: https://x.test/?sig=abc
 ```
 
 This should produce only `header.secret` because the sensitive-header finding covers the URL value.
+
+```http
+Proxy-Authorization: Digest token=https://x.test/?sig=abc
+```
+
+This should produce only `proxy_authorization.other` because the proxy finding covers the URL value.
 
 ```http
 Cookie: theme=https://x.test/?sig=abc
@@ -600,7 +668,7 @@ Marker handling must preserve idempotence. The approved marker is `<REDACTED:jso
 
 The JSON finder must not introduce grouped or per-field rule IDs such as `json.token`, `json.password`, `json.api_key`, or `json.secret`. Reports should aggregate counts by fixed rule ID `json.value` only. Field names may remain visible in sanitized evidence for structure, but they must not be stored in `Finding`, `SanitizationReport`, CLI output, or reports as dynamic identifiers.
 
-Existing findings are authoritative. In `sanitize_text`, collect Authorization findings, Cookie findings, selected sensitive-header findings, and selected sensitive-query-parameter findings first. JSON findings should run after those broader finders or otherwise receive the existing finding spans and skip any candidate value span that overlaps them. `apply_findings` remains the final overlap guard. Do not introduce a generalized overlap-resolution system.
+Existing findings are authoritative. In `sanitize_text`, collect Authorization findings, Proxy-Authorization findings, Cookie findings, selected sensitive-header findings, form findings, and selected sensitive-query-parameter findings first. JSON findings should run after those broader finders or otherwise receive the existing finding spans and skip any candidate value span that overlaps them. `apply_findings` remains the final overlap guard. Do not introduce a generalized overlap-resolution system.
 
 Examples of overlap behavior:
 
@@ -609,6 +677,12 @@ X-API-Key: {"token":"abc"}
 ```
 
 This should produce only `header.secret` because the sensitive-header finding covers the JSON value.
+
+```http
+Proxy-Authorization: Custom {"token":"abc"}
+```
+
+This should produce only `proxy_authorization.other` because the proxy finding covers the JSON value.
 
 ```http
 Cookie: theme={"token":"abc"}
@@ -662,7 +736,7 @@ Marker handling must preserve idempotence. The approved marker is `<REDACTED:for
 
 The form finder must not introduce grouped or per-field rule IDs such as `form.token`, `form.password`, `form.api_key`, or `form.secret`. Reports should aggregate counts by fixed rule ID `form.value` only. Field names may remain visible in sanitized evidence for structure, but they must not be stored in `Finding`, `SanitizationReport`, CLI output, or reports as dynamic identifiers.
 
-Existing findings are authoritative. In `sanitize_text`, collect Authorization findings, Cookie findings, and selected sensitive-header findings first. Form findings should run next and receive those existing finding spans to skip any candidate value span that overlaps them. Query findings and JSON findings should run after form findings and also skip any candidate value span that overlaps an existing form finding. `apply_findings` remains the final overlap guard. Do not introduce a generalized overlap-resolution system.
+Existing findings are authoritative. In `sanitize_text`, collect Authorization findings, Proxy-Authorization findings, Cookie findings, and selected sensitive-header findings first. Form findings should run next and receive those existing finding spans to skip any candidate value span that overlaps them. Query findings and JSON findings should run after form findings and also skip any candidate value span that overlaps an existing proxy or form finding. `apply_findings` remains the final overlap guard. Do not introduce a generalized overlap-resolution system.
 
 Examples of overlap behavior:
 
@@ -671,6 +745,12 @@ Authorization: Bearer access_token=abc
 ```
 
 This should produce only `authorization.bearer` because the Authorization finding covers the form-like text.
+
+```http
+Proxy-Authorization: Basic access_token=abc
+```
+
+This should produce only `proxy_authorization.basic` because the Proxy-Authorization finding covers the form-like text.
 
 ```http
 Content-Type: application/x-www-form-urlencoded

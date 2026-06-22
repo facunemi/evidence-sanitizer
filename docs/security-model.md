@@ -3,7 +3,7 @@
 ## Protected Assets
 
 - Original evidence files.
-- Detected sensitive values, including Bearer tokens, Basic credentials, custom or structured Authorization credentials, Cookie values, selected sensitive API/authentication-related header values, selected sensitive URL query parameter values, selected sensitive JSON-like string field values, selected sensitive form-urlencoded field values, and future supported secret types.
+- Detected sensitive values, including Bearer tokens, Basic credentials, custom or structured Authorization credentials, Proxy-Authorization credentials, Cookie values, selected sensitive API/authentication-related header values, selected sensitive URL query parameter values, selected sensitive JSON-like string field values, selected sensitive form-urlencoded field values, and future supported secret types.
 - Sanitized output integrity.
 - User trust that reported findings do not leak secret contents.
 - Local filesystem state at source and destination paths.
@@ -37,6 +37,7 @@
 - Detected values must never appear in terminal output, reports, exceptions, tracebacks, test snapshots, or logs.
 - Findings and reports must not store matched secret values.
 - Reports for generic Authorization schemes must not include custom scheme names as rule identifiers.
+- Reports for Proxy-Authorization findings must use only fixed rule identifiers and must not derive rule identifiers from header names, proxy auth scheme names, or detected values.
 - Reports for Cookie findings must use only fixed rule identifiers and must not derive rule identifiers from cookie names.
 - Milestone 4 Cookie classification must use only deterministic Cookie-name rules and must not inspect, decode, parse, infer from, or classify using Cookie values.
 - Reports for selected sensitive-header findings must use only fixed rule identifier `header.secret` and must not derive rule identifiers from header names, header groups, or detected values.
@@ -67,6 +68,8 @@ Safe output must not include:
 - Decoded input snippets.
 - Replacement previews with surrounding evidence.
 - Custom Authorization scheme names in report rule identifiers.
+- Proxy-Authorization credential values, source excerpts, or snippets.
+- Proxy auth scheme names as dynamic report identifiers.
 - Cookie values or Cookie source excerpts.
 - Cookie names as dynamic report identifiers.
 - Cookie classification categories derived into dynamic report identifiers.
@@ -183,7 +186,7 @@ Milestone 5 selected headers may contain API keys, auth/session/access/refresh/i
 
 Milestone 5 intentionally preserves header names for evidence context. Preserved names may reveal cloud providers, authentication architecture, frameworks, API design, or vendor integrations. Reports must still contain only `header.secret` and counts, never header names as dynamic identifiers or detected values.
 
-Milestone 5 intentionally defers IP and client identity headers such as `x-forwarded-for`, `x-real-ip`, `cf-connecting-ip`, `true-client-ip`, and `x-client-ip` because they are privacy identifiers rather than authentication secrets. Identifier headers such as `x-client-id`, `client-id`, `x-tenant-id`, `tenant-id`, `x-user-id`, and `user-id` are also deferred because they are not always secrets. `Proxy-Authorization` is deferred because it is semantically close to `Authorization` and requires a separate decision on scheme-preserving behavior, markers, and rule IDs.
+Milestone 5 intentionally defers IP and client identity headers such as `x-forwarded-for`, `x-real-ip`, `cf-connecting-ip`, `true-client-ip`, and `x-client-ip` because they are privacy identifiers rather than authentication secrets. Identifier headers such as `x-client-id`, `client-id`, `x-tenant-id`, `tenant-id`, `x-user-id`, and `user-id` are also deferred because they are not always secrets. `Proxy-Authorization` is not handled by the milestone 5 selected sensitive-header finder because milestone 11 defines dedicated scheme-preserving proxy behavior, markers, and rule IDs.
 
 Milestone 6 expands only to selected sensitive raw URL query parameter values in decoded text evidence. It supports an approved fixed list of exact raw parameter names and replaces raw values after `=` with `<REDACTED:query.secret>`. It does not URL-decode, URL-re-encode, recursively parse URL-valued parameters, parse JSON, parse XML, parse structured form bodies, parse multipart bodies, parse HTML, parse JavaScript, use value-based classification, use substring parameter matching, use grouped rule IDs, use per-parameter rule IDs, use dynamic report IDs, add user configuration, add plugins, add registries, add new dependencies, or add new exit codes.
 
@@ -191,19 +194,25 @@ Milestone 9 expands only to selected sensitive JSON-like string fields in decode
 
 Milestone 10 expands only to selected sensitive `application/x-www-form-urlencoded` field values in HTTP-like evidence. It supports an approved fixed list of exact raw form field names and replaces raw values after `=` with `<REDACTED:form.value>`. It scans only bodies indicated by a physical line-start `Content-Type: application/x-www-form-urlencoded` header followed by a blank header/body separator and the immediate first physical line after the separator. It does not perform full HTTP parsing, multi-line or wrapped body parsing, `Content-Length`-based parsing, chunked-transfer decoding, multipart parsing, JSON parsing changes, XML parsing, HTML parsing, JavaScript parsing, URL decoding, percent-decoding, plus-decoding, value-based classification, substring field-name matching, grouped rule IDs, per-field rule IDs, dynamic report IDs, user configuration, plugins, registries, new dependencies, or new exit codes.
 
+Milestone 11 expands only to exact line-start HTTP request `Proxy-Authorization` header credentials. It supports Bearer, Basic, and syntactically valid other proxy auth schemes using dedicated fixed rule IDs `proxy_authorization.bearer`, `proxy_authorization.basic`, and `proxy_authorization.other`. It uses dedicated proxy markers and does not reuse `authorization.*` rule IDs, because proxy credentials must be distinguishable from application/API Authorization credentials in reports. It does not add broader header coverage, generic header matching, substring matching, full HTTP parsing, folded-header parsing, value decoding, recursive parsing, runtime configuration, plugins, external dependencies, CLI options, output formats, network behavior, or new exit codes.
+
 Milestone 9 selected JSON-like fields may contain OAuth/OIDC-style access, refresh, ID, and auth tokens; session identifiers; JWTs; API keys; client secrets; shared secrets; private keys; signatures; SAML responses; and client assertions. Broad approved exact names such as `token`, `session`, `sig`, and `signature` may produce false positives, but they are explicitly approved because they are common in API evidence. `sig` and `signature` are often highly sensitive in signed URLs and callback flows. Cloud signature parameters such as `x-amz-signature`, `x-amz-security-token`, and `x-amz-credential` can authorize temporary access. API key parameters can authenticate requests.
 
 Milestone 6 intentionally defers broad names such as `key`, `code`, `state`, `nonce`, `secret`, `sign`, and `signed` to avoid broad false positives. Short cloud/SAS names such as `se`, `sp`, `sv`, `sr`, and `st` are deferred until a dedicated signed-URL context is approved. Tracking identifiers such as `utm_source`, `gclid`, `fbclid`, `msclkid`, and `_ga` are privacy or telemetry identifiers and belong in a separate milestone. Password and SAML/form-like parameter names are deferred until body/form parsing scope is addressed or explicitly approved.
 
 Milestone 10 selected form-urlencoded fields may contain OAuth/OIDC-style access, refresh, ID, and auth tokens; session identifiers; JWTs; API keys; client secrets; shared secrets; private keys; signatures; SAML responses; client assertions; and anti-CSRF tokens. Broad approved exact names such as `token`, `session`, `sig`, and `signature` may produce false positives, but they are explicitly approved because they are common in form submissions and matching is Content-Type-gated and exact-name-only. `sig` and `signature` are often highly sensitive in signed URL and callback flows. Cloud signature parameters such as `x-amz-signature`, `x-amz-security-token`, and `x-amz-credential` can authorize temporary access. API key parameters can authenticate requests.
 
+Milestone 11 proxy credentials may grant access through intermediary infrastructure or reveal proxy authentication context. Preserving the `Proxy-Authorization` header name and proxy auth scheme provides useful evidence context but can reveal proxy use and authentication architecture. Reports still contain only fixed `proxy_authorization.*` rule IDs and counts, never header names as dynamic identifiers, custom proxy scheme names, or detected values.
+
 Milestone 10 intentionally defers `code`, `state`, `nonce`, `secret`, `key`, `username`, `email`, `user`, `otp`, and `mfa_code` to avoid expanding scope into context-dependent OAuth fields, privacy/PII identifiers, or one-time credential handling without explicit approval. Form bodies without a supported `Content-Type` line, multi-line form bodies, wrapped form bodies, semicolon-separated form fields, and percent-encoded field names remain unsupported and may retain secrets. Plus-decoding is not performed. A `+` character is treated as ordinary raw value text. Approved raw field names are still redacted even when their values contain `+`.
+
+Milestone 11 intentionally leaves `Proxy-Authenticate`, `WWW-Authenticate`, `X-Proxy-Authorization`, `Forwarded`, `X-Forwarded-*`, `X-Original-*`, `Via`, `X-API-Key` variants beyond existing `header.secret` behavior, and additional signature headers out of scope. These headers require separate scope and false-positive decisions before any future milestone. Proxy Basic credentials are not decoded or validated. Generic structured proxy credentials, such as Digest, Negotiate, NTLM, OAuth, Signature, or custom parameters, are redacted as one whole credential section without parsing individual parameters.
 
 Folded Cookie headers are unsupported in milestone 3. If an exact `Cookie:` line is immediately followed by a physical line beginning with a space or tab, the folded form remains completely unchanged. This is a residual false-negative risk because folded Cookie values may remain in output. Full folded-header parsing is deferred.
 
 Folded selected sensitive headers are unsupported in milestone 5. If an exact sensitive header line is immediately followed by a physical line beginning with a space or tab, the complete folded form remains unchanged and produces no `header.secret` finding. This is a residual false-negative risk because folded sensitive-header values may remain in output. Full folded-header parsing remains deferred.
 
-Full HTTP header/body boundary parsing remains deferred in milestone 3, milestone 5, and milestone 6. As a result, exact header-like `Cookie:` or selected sensitive-header lines inside message bodies may be sanitized, and exact raw URL-like text inside bodies or logs may be sanitized. This is an accepted false-positive risk for deterministic line-oriented and query-scanning rules.
+Full HTTP header/body boundary parsing remains deferred in milestone 3, milestone 5, milestone 6, and milestone 11. As a result, exact header-like `Cookie:`, selected sensitive-header, or `Proxy-Authorization:` lines inside message bodies may be sanitized, and exact raw URL-like text inside bodies or logs may be sanitized. This is an accepted false-positive risk for deterministic line-oriented and query-scanning rules.
 
 Percent-encoded query parameter names are not decoded in milestone 6. For example, `access%5Ftoken` does not match `access_token` and may retain a sensitive value. Recursive URL-in-value parsing is deferred, so nested URL query strings may retain sensitive values. Malformed or unusual query strings may be partially missed. The milestone does not claim complete secret-removal coverage.
 
@@ -223,6 +232,8 @@ Milestone 6 selected query-parameter detection should use a small deterministic 
 
 Milestone 9 selected JSON-like field detection should use a small deterministic raw JSON-like scanner. A full JSON parser, JSON reserialization, JSON schema validation, broad regex, substring search, or unicode-escape decoding pass is not required. Performance tests are required only if the chosen implementation creates realistic risk, such as unbounded scanning or catastrophic backtracking.
 
+Milestone 11 Proxy-Authorization detection should use existing physical-line iteration plus exact header-name checks and the existing Authorization auth-scheme grammar. A broad regex, substring search, generic header matcher, full HTTP parser, value decoder, or recursive parser is not required. Performance tests are required only if the chosen implementation creates realistic risk.
+
 Regex is not the only approved parsing mechanism. Future structured formats may require parsers or purpose-built scanners instead of broad regular expressions.
 
 ## Rule Ordering, Overlap, And Idempotence
@@ -237,6 +248,12 @@ Milestone 2 should use one coherent Authorization-header finder that produces at
 
 Milestone 2 approved markers are `<REDACTED:authorization.bearer>`, `<REDACTED:authorization.basic>`, and `<REDACTED:authorization.credentials>`. If the complete credential section is exactly any approved marker, the value is already sanitized and produces no finding or count, even when the marker appears under a different scheme. The sanitizer must not correct or normalize wrong-scheme markers. A marker embedded inside a larger raw credential value is not considered already sanitized.
 
+Milestone 11 should use one coherent Proxy-Authorization finder that produces at most one finding per `Proxy-Authorization` line. Bearer and Basic proxy branches must not fall through to the generic proxy branch when their specialized validation fails. Generic proxy fallback applies only to schemes other than Bearer and Basic. The proxy finder uses dedicated rule IDs `proxy_authorization.bearer`, `proxy_authorization.basic`, and `proxy_authorization.other`, and dedicated markers `<REDACTED:proxy_authorization.bearer>`, `<REDACTED:proxy_authorization.basic>`, and `<REDACTED:proxy_authorization.credentials>`.
+
+If the complete proxy credential section is exactly any approved proxy marker, the value is already sanitized and produces no finding or count, even when the marker appears under a different proxy scheme. The sanitizer must not correct or normalize wrong-proxy-scheme markers. A proxy marker embedded inside a larger raw credential value is not already sanitized and must be redacted. Existing non-proxy markers inside `Proxy-Authorization`, including Authorization, `header.secret`, `query.secret`, `json.value`, `form.value`, and Cookie markers, are treated as raw and re-redacted to the appropriate proxy marker to preserve precise proxy report semantics.
+
+Authorization findings are collected before Proxy-Authorization findings. Proxy findings are collected before Cookie, selected sensitive-header, form, query, and JSON findings. Proxy findings participate in overlap checks for later form, query, and JSON rules, so nested URLs, JSON-like strings, or form-like content inside proxy credentials must not create secondary findings. Normal URL query strings outside proxy credentials still use `query.secret`.
+
 Milestone 3 should add independent Cookie findings that do not overlap with Authorization findings by construction. The combined finding set should continue to use right-to-left replacement, and any overlap should remain an internal sanitization error rather than introducing a generalized overlap-resolution system.
 
 Milestone 3 approved Cookie markers are `<REDACTED:cookie.value>` and `<REDACTED:cookie.header>`. If an exact approved Cookie marker is used as a complete individual cookie value, the value is already sanitized and produces no finding or count. If an exact approved Cookie marker is used as the complete trimmed Cookie header value, the header is already sanitized and produces no finding or count. The sanitizer must not correct or normalize wrong-context markers. A marker embedded inside a larger raw value is not considered already sanitized and must be redacted. Repeated sanitization must be byte-identical.
@@ -247,15 +264,15 @@ Milestone 5 uses only rule ID `header.secret` and marker `<REDACTED:header.secre
 
 Milestone 6 uses only rule ID `query.secret` and marker `<REDACTED:query.secret>`. If the complete raw selected query parameter value is exactly `<REDACTED:query.secret>`, the value is already sanitized and produces no finding or count. Marker handling must be marker-aware so the approved marker's `<` and `>` do not break idempotence or query boundary detection. A marker embedded inside a larger raw query value is not already sanitized and must be redacted. Unapproved query marker-like values and wrong-family Authorization, Cookie, or sensitive-header markers inside selected query parameter values are treated as raw and redacted. Replacement-marker collisions are accepted and handled deterministically. Do not introduce a generalized marker framework.
 
-Existing Authorization, Cookie, and selected sensitive-header findings are authoritative in milestone 6. Query findings that overlap existing findings must be skipped and produce no `query.secret` count. `apply_findings` remains the final overlap guard. A preserved harmless Cookie value may still receive a `query.secret` finding when no Cookie finding overlaps because harmless Cookie values are intentionally preserved.
+Existing Authorization, Proxy-Authorization, Cookie, selected sensitive-header, and form findings are authoritative after milestone 11. Query findings that overlap existing findings must be skipped and produce no `query.secret` count. `apply_findings` remains the final overlap guard. A preserved harmless Cookie value may still receive a `query.secret` finding when no Cookie finding overlaps because harmless Cookie values are intentionally preserved.
 
 Milestone 9 uses only rule ID `json.value` and marker `<REDACTED:json.value>`. If the complete raw JSON-like string value payload is exactly `<REDACTED:json.value>`, the value is already sanitized and produces no finding or count. A marker embedded inside a larger raw string value is not already sanitized and must be redacted. Unapproved JSON marker-like values and wrong-family Authorization, Cookie, sensitive-header, or query markers inside selected JSON-like field values are treated as raw and redacted. Replacement-marker collisions are accepted and handled deterministically. Do not introduce a generalized marker framework.
 
-Existing Authorization, Cookie, selected sensitive-header, and selected sensitive-query-parameter findings are authoritative in milestone 9. JSON findings that overlap existing findings must be skipped and produce no `json.value` count. `apply_findings` remains the final overlap guard. A preserved harmless Cookie value may still receive a `json.value` finding when no Cookie finding overlaps because harmless Cookie values are intentionally preserved. A non-sensitive query or header value may also receive a `json.value` finding when no broader finding overlaps.
+Existing Authorization, Proxy-Authorization, Cookie, selected sensitive-header, form, and selected sensitive-query-parameter findings are authoritative after milestone 11. JSON findings that overlap existing findings must be skipped and produce no `json.value` count. `apply_findings` remains the final overlap guard. A preserved harmless Cookie value may still receive a `json.value` finding when no Cookie finding overlaps because harmless Cookie values are intentionally preserved. A non-sensitive query or header value may also receive a `json.value` finding when no broader finding overlaps.
 
 Milestone 10 uses only rule ID `form.value` and marker `<REDACTED:form.value>`. If the complete raw form field value is exactly `<REDACTED:form.value>`, the value is already sanitized and produces no finding or count. A marker embedded inside a larger raw form value is not already sanitized and must be redacted. Unapproved form marker-like values and wrong-family Authorization, Cookie, sensitive-header, query, or JSON markers inside selected form field values are treated as raw and redacted. Replacement-marker collisions are accepted and handled deterministically. Do not introduce a generalized marker framework.
 
-Existing Authorization, Cookie, and selected sensitive-header findings are collected before form findings and remain authoritative in milestone 10. Form findings that overlap those earlier broader findings must be skipped and produce no `form.value` count. Query and JSON findings run after form findings; query and JSON findings that overlap form findings must be skipped and produce no `query.secret` or `json.value` count. `apply_findings` remains the final overlap guard and may still prevent accidental overlapping findings if future refactors change ordering. A non-sensitive form field may still receive a `query.secret` or `json.value` finding when no form finding overlaps.
+Existing Authorization, Proxy-Authorization, Cookie, and selected sensitive-header findings are collected before form findings and remain authoritative after milestone 11. Form findings that overlap those earlier broader findings must be skipped and produce no `form.value` count. Query and JSON findings run after form findings; query and JSON findings that overlap proxy or form findings must be skipped and produce no `query.secret` or `json.value` count. `apply_findings` remains the final overlap guard and may still prevent accidental overlapping findings if future refactors change ordering. A non-sensitive form field may still receive a `query.secret` or `json.value` finding when no form finding overlaps.
 
 ## Dry-Run Behavior
 
@@ -297,9 +314,13 @@ Directory processing is deferred. Future directory mode must define partial-fail
 - Milestone 6 percent-encoded query parameter names remain unsupported and may retain sensitive values.
 - Milestone 6 does not recursively parse URL-valued query parameters, so nested query values may remain raw.
 - Milestone 6 marker collisions are accepted and handled deterministically.
-- Existing Authorization, Cookie, and selected sensitive-header findings remain authoritative for overlapping spans.
+- Existing Authorization, Proxy-Authorization, Cookie, and selected sensitive-header findings remain authoritative for overlapping spans after milestone 11.
 - IP/client identity headers, identifier headers, broad query names, short SAS names, tracking parameters, password-like query names, and SAML/form-like query names remain deferred to future milestones or approvals.
-- `Proxy-Authorization`, `Set-Cookie`, XML bodies, form bodies as structured form data, multipart bodies, HTML, JavaScript, and unsupported body parsing remain out of scope.
+- `Set-Cookie`, `Proxy-Authenticate`, `WWW-Authenticate`, `X-Proxy-Authorization`, `Forwarded`, `X-Forwarded-*`, `X-Original-*`, `Via`, XML bodies, multipart bodies, HTML, JavaScript, and unsupported body parsing remain out of scope.
+- Milestone 11 does not guarantee detection of every proxy credential or every possible secret.
+- Milestone 11 leaves folded and indented `Proxy-Authorization` headers unchanged, which may leave proxy credentials intact.
+- Milestone 11 may sanitize exact `Proxy-Authorization:` lines inside message bodies because full HTTP parsing remains deferred.
+- Milestone 11 marker collisions are accepted and handled deterministically.
 - Milestone 9 does not guarantee detection of every sensitive JSON-like field or every possible secret.
 - Milestone 9 may sanitize JSON-like string-key/string-value pairs inside prose, logs, or snippets because full JSON parsing remains deferred.
 - Milestone 9 does not decode JSON unicode-escape field names, so names such as `"access\u005Ftoken"` remain unsupported and may retain sensitive values.
@@ -308,7 +329,7 @@ Directory processing is deferred. Future directory mode must define partial-fail
 - Deferred JSON field names such as `key`, `secret`, `code`, `state`, `nonce`, `assertion`, CSRF/XSRF fields, and identifier-like fields may retain secrets.
 - Broad approved exact names such as `token`, `session`, `sig`, and `signature` may produce false positives.
 - Malformed JSON-like candidates may be skipped and may retain secrets.
-- Existing Authorization, Cookie, selected sensitive-header, and selected sensitive-query-parameter findings remain authoritative for overlapping spans.
+- Existing Authorization, Proxy-Authorization, Cookie, selected sensitive-header, form, and selected sensitive-query-parameter findings remain authoritative for overlapping spans after milestone 11.
 - Milestone 10 does not guarantee detection of every sensitive form-urlencoded field or every possible secret.
 - Milestone 10 scans only form bodies indicated by a supported `Content-Type` line and a blank header/body separator; form bodies without such a header, multi-line form bodies, wrapped form bodies, and semicolon-separated form fields remain unsupported and may retain secrets.
 - Milestone 10 scans only the immediate first physical line after the separator.
@@ -316,7 +337,7 @@ Directory processing is deferred. Future directory mode must define partial-fail
 - Milestone 10 may leave deferred field names such as `code`, `state`, `nonce`, `secret`, `key`, `username`, `email`, `otp`, and `mfa_code` unchanged.
 - Broad approved exact form names such as `token`, `session`, `sig`, and `signature` may produce false positives.
 - Malformed form body candidates may be skipped and may retain secrets.
-- Existing Authorization, Cookie, and selected sensitive-header findings remain authoritative for overlapping spans. Query and JSON findings run after form and are skipped when they overlap form findings.
+- Existing Authorization, Proxy-Authorization, Cookie, and selected sensitive-header findings remain authoritative for overlapping spans after milestone 11. Query and JSON findings run after form and are skipped when they overlap proxy or form findings.
 
 ## Explicitly Unsupported Adversarial Filesystem Scenarios
 

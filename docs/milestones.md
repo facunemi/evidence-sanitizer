@@ -2528,15 +2528,16 @@ access_token=<REDACTED:form.value>
 Final sanitizer ordering:
 
 1. Authorization findings.
-2. Cookie findings.
-3. Sensitive-header findings.
-4. Form-urlencoded findings.
-5. Query findings.
-6. JSON findings.
+2. Proxy-Authorization findings.
+3. Cookie findings.
+4. Sensitive-header findings.
+5. Form-urlencoded findings.
+6. Query findings.
+7. JSON findings.
 
 Rationale:
 
-- Authorization, Cookie, and sensitive headers are broader line/header findings and remain authoritative.
+- Authorization, Proxy-Authorization, Cookie, and sensitive headers are broader line/header findings and remain authoritative.
 - Form-urlencoded body values are broader than nested query or JSON-like content inside the same form value.
 - Query and JSON may still run inside non-sensitive form fields when no form finding overlaps.
 
@@ -2571,6 +2572,12 @@ X-API-Key: access_token=abc
 
 Authorization and sensitive-header rules remain authoritative where they match.
 
+```http
+Proxy-Authorization: Basic access_token=abc
+```
+
+After Milestone 11, this produces only `proxy_authorization.basic`, because the Proxy-Authorization finding covers the form-like text.
+
 ```json
 {"body":"access_token=abc&client_secret=secret"}
 ```
@@ -2592,7 +2599,7 @@ No `form.value` applies unless there is a supported Content-Type-gated form body
 
 - Keep form-urlencoded behavior in `src/evidence_sanitizer/sanitizer.py` using small private constants and one private Content-Type-gated form body finder.
 - Reuse `Finding`, `SanitizationReport`, `_iter_physical_lines` for line-boundary detection, `apply_findings`, `sanitize_text`, existing file handling, right-to-left replacement, and overlap protection.
-- Form findings should run after Authorization, Cookie, and sensitive-header findings, and before query and JSON findings, receiving existing finding spans to skip overlaps.
+- Form findings should run after Authorization, Proxy-Authorization, Cookie, and sensitive-header findings, and before query and JSON findings, receiving existing finding spans to skip overlaps.
 - Add no new public data structures or public APIs.
 - Do not add `form.py`, `rules/`, HTTP parsing dependencies, configuration files, user-editable policy, registries, plugins, dependency injection, inheritance, generalized parser frameworks, recursive parsers, or new exit codes.
 
@@ -2601,6 +2608,7 @@ No `form.value` applies unless there is a supported Content-Type-gated form body
 - Existing `Authorization: Bearer` behavior remains unchanged.
 - Existing `Authorization: Basic` behavior remains unchanged.
 - Existing generic `Authorization` scheme behavior remains unchanged.
+- Existing Proxy-Authorization behavior remains unchanged until Milestone 11 implementation; after Milestone 11, proxy findings are authoritative for overlapping spans.
 - Existing Cookie parser, fallback, classification, marker policy, counts, folded Cookie behavior, and `Set-Cookie` scope remain unchanged.
 - Existing selected sensitive-header behavior remains unchanged.
 - Existing selected sensitive-query-parameter behavior remains unchanged.
@@ -2617,7 +2625,7 @@ No `form.value` applies unless there is a supported Content-Type-gated form body
 - Deferred names such as `code`, `state`, `nonce`, `secret`, `key`, `username`, `email`, `otp`, and `mfa_code` may retain secrets.
 - Broad approved exact names such as `token`, `session`, `sig`, and `signature` may produce false positives.
 - Malformed form body candidates may be skipped and may retain secrets.
-- Existing Authorization, Cookie, and selected sensitive-header findings remain authoritative for overlapping spans. Query and JSON findings run after form and are skipped when they overlap form findings.
+- Existing Authorization, Proxy-Authorization, Cookie, and selected sensitive-header findings remain authoritative for overlapping spans. Query and JSON findings run after form and are skipped when they overlap proxy or form findings.
 - The tool does not guarantee complete secret removal.
 
 ### Milestone 10 Acceptance Criteria
@@ -2645,8 +2653,8 @@ No `form.value` applies unless there is a supported Content-Type-gated form body
 - Embedded `<REDACTED:form.value>` values are redacted.
 - Unapproved form marker-like values are redacted.
 - Wrong-family markers are redacted.
-- Form findings overlapping Authorization, Cookie, or `header.secret` findings are skipped.
-- Query and JSON findings overlapping form findings are skipped.
+- Form findings overlapping Authorization, Proxy-Authorization, Cookie, or `header.secret` findings are skipped.
+- Query and JSON findings overlapping proxy or form findings are skipped.
 - Query/JSON may still run in non-sensitive form fields when no form finding overlaps.
 - Reports contain only fixed rule ID `form.value` and counts for form findings.
 - Form field names never become report IDs and never appear in report output.
@@ -2696,8 +2704,8 @@ Required unit test coverage:
 - Content-Type with optional parameters.
 - Unsupported Content-Type or missing Content-Type remains unchanged.
 - No multi-line or wrapped body parsing.
-- Form findings skipped when overlapping Authorization, Cookie, or `header.secret` findings.
-- Query and JSON findings skipped when overlapping form findings.
+- Form findings skipped when overlapping Authorization, Proxy-Authorization, Cookie, or `header.secret` findings.
+- Query and JSON findings skipped when overlapping proxy or form findings.
 - Query/JSON redaction inside non-sensitive form fields when no form finding overlaps.
 - Multiple form findings counted correctly.
 - Form findings do not store raw values or field names.
@@ -2706,7 +2714,7 @@ Required unit test coverage:
 Required application and CLI test coverage:
 
 - Authorization plus Cookie plus selected sensitive headers plus selected query parameters plus selected JSON-like fields plus selected form-urlencoded fields in one file.
-- Correct fixed counts for `authorization.bearer`, `authorization.basic`, `authorization.other`, `cookie.value`, `cookie.header`, `header.secret`, `query.secret`, `json.value`, and `form.value`.
+- Correct fixed counts for `authorization.bearer`, `authorization.basic`, `authorization.other`, `proxy_authorization.bearer`, `proxy_authorization.basic`, `proxy_authorization.other`, `cookie.value`, `cookie.header`, `header.secret`, `query.secret`, `json.value`, and `form.value` after Milestone 11 is implemented.
 - Safe CLI output contains no form values, no source excerpts, and no field names as report IDs.
 - Source remains byte-for-byte unchanged.
 - Dry-run creates no output.
@@ -2719,9 +2727,254 @@ Required application and CLI test coverage:
 - Existing exit-code behavior remains unchanged.
 - Console-script and module entry points remain consistent.
 
+## Milestone 11: Proxy-Authorization Header Sanitizer
+
+Milestone 11 is planned and specified here, but not implemented by this documentation step. Implementation requires a later code-and-test milestone or task.
+
+Milestone 11 adds deterministic sanitization for exact line-start HTTP request `Proxy-Authorization` header credentials while preserving all milestone 1 through milestone 10 file-processing, safety, encoding, newline, reporting, CLI, Authorization, Cookie, selected sensitive-header, selected sensitive-query-parameter, selected JSON-like field, selected form-urlencoded field, and marker behavior.
+
+Milestone 11 scope:
+
+- Support only exact decoded physical line-start `Proxy-Authorization` request header lines.
+- Match the `Proxy-Authorization` header name case-insensitively.
+- Preserve header-name casing, spaces and tabs around `:`, scheme casing, spaces and tabs before credentials, trailing spaces and tabs, line endings, UTF-8 BOM state, and final-newline state through the existing text and file flow.
+- Use the same auth-scheme grammar as Authorization: ASCII HTTP token characters only.
+- Redact Bearer proxy credentials with `proxy_authorization.bearer`.
+- Redact Basic proxy credentials with `proxy_authorization.basic`.
+- Redact syntactically valid other proxy auth schemes with `proxy_authorization.other`.
+- Keep one input file, one explicit output file, and complete-file in-memory processing.
+- Keep deterministic built-in behavior only.
+
+Milestone 11 must not include:
+
+- Broader additional header coverage.
+- Generic header matching.
+- Header substring matching.
+- `Proxy-Authenticate` sanitization.
+- `WWW-Authenticate` sanitization.
+- `X-Proxy-Authorization` sanitization.
+- `Forwarded` sanitization.
+- `X-Forwarded-*` sanitization.
+- `X-Original-*` sanitization.
+- `Via` sanitization.
+- `X-API-Key` variants beyond existing `header.secret` behavior.
+- Additional signature headers.
+- Full HTTP parsing.
+- Folded-header parsing.
+- Value decoding.
+- Recursive parsing.
+- Runtime configuration.
+- Configuration files.
+- User-defined rules.
+- Plugin APIs or plugin registries.
+- External dependencies.
+- Network behavior.
+- Telemetry.
+- LLM behavior.
+- Persistence.
+- New CLI options.
+- New output formats.
+- New exit codes.
+
+Approved milestone 11 rule IDs:
+
+```text
+proxy_authorization.bearer
+proxy_authorization.basic
+proxy_authorization.other
+```
+
+Approved milestone 11 markers:
+
+```text
+<REDACTED:proxy_authorization.bearer>
+<REDACTED:proxy_authorization.basic>
+<REDACTED:proxy_authorization.credentials>
+```
+
+Do not reuse `authorization.*` rule IDs or markers for `Proxy-Authorization`. Dedicated proxy-specific IDs are required so reports distinguish application/API Authorization credentials from proxy credentials.
+
+### M11 Matching Behavior
+
+The proxy auth scheme must use the ASCII HTTP token character set:
+
+```text
+!#$%&'*+-.^_`|~0-9A-Za-z
+```
+
+Unicode scheme names and malformed scheme names remain unchanged.
+
+Bearer proxy behavior:
+
+- Match `Bearer` case-insensitively.
+- Preserve scheme casing and surrounding formatting.
+- Require exactly one contiguous non-whitespace credential.
+- Replace only the credential with `<REDACTED:proxy_authorization.bearer>`.
+- Use rule ID `proxy_authorization.bearer`.
+- Leave empty, whitespace-only, and internally spaced Bearer credentials unchanged.
+- Never fall through to `proxy_authorization.other` when Bearer validation fails.
+
+Basic proxy behavior:
+
+- Match `Basic` case-insensitively.
+- Preserve scheme casing and surrounding formatting.
+- Require exactly one contiguous non-whitespace credential.
+- Do not Base64-decode or validate the credential.
+- Replace only the credential with `<REDACTED:proxy_authorization.basic>`.
+- Use rule ID `proxy_authorization.basic`.
+- Leave empty, whitespace-only, and internally spaced Basic credentials unchanged.
+- Never fall through to `proxy_authorization.other` when Basic validation fails.
+
+Generic proxy behavior:
+
+- Apply only to syntactically valid schemes other than Bearer and Basic.
+- Support valid schemes such as Digest, Negotiate, NTLM, and custom valid auth-schemes.
+- Preserve scheme casing and surrounding formatting.
+- Replace the complete non-empty credential section after the scheme with `<REDACTED:proxy_authorization.credentials>`.
+- Use rule ID `proxy_authorization.other`.
+- Allow internal spaces, commas, quotes, equals signs, colons, slashes, and other punctuation.
+- Do not parse individual Digest, Negotiate, NTLM, OAuth, Signature, or custom parameters.
+- Leave empty or scheme-only headers unchanged.
+- Never include custom proxy scheme names in report rule IDs.
+
+Folded `Proxy-Authorization` headers are unsupported. If an exact `Proxy-Authorization:` line is immediately followed by a physical line beginning with a space or tab, leave the complete folded form unchanged, emit no proxy finding, and do not sanitize only the first physical line.
+
+### M11 Marker And Idempotence Policy
+
+- Exact complete proxy markers are already sanitized and produce no finding.
+- Proxy markers are accepted under the wrong proxy auth scheme without normalization.
+- The sanitizer must not correct or normalize a proxy marker used under another proxy scheme.
+- Embedded proxy markers inside larger credentials are redacted.
+- Existing non-proxy markers inside `Proxy-Authorization` are treated as raw and re-redacted to the appropriate proxy marker.
+- Non-proxy markers include Authorization markers, `<REDACTED:header.secret>`, `<REDACTED:query.secret>`, `<REDACTED:json.value>`, `<REDACTED:form.value>`, and Cookie markers.
+- Re-redacting non-proxy markers is intentional to preserve precise proxy report semantics.
+- Repeated sanitization must produce byte-identical output.
+
+### M11 Ordering And Overlap
+
+Final sanitizer ordering:
+
+1. Authorization findings.
+2. Proxy-Authorization findings.
+3. Cookie findings.
+4. Sensitive-header findings.
+5. Form-urlencoded findings.
+6. Query findings.
+7. JSON findings.
+
+Proxy findings participate in overlap checks for later form, query, and JSON rules. Nested URLs, JSON-like strings, or form-like content inside proxy credentials must not create secondary `form.value`, `query.secret`, or `json.value` findings. Normal URL query strings outside proxy credentials still use `query.secret`.
+
+### M11 Reporting Safety
+
+- Findings store only fixed rule ID, offsets, and replacement.
+- Reports contain only fixed proxy rule IDs and counts.
+- Reports must not include raw proxy credential values.
+- Reports must not include dynamic header names.
+- Reports must not include proxy credential snippets.
+- Reports must not include custom proxy scheme names as rule IDs.
+
+### M11 Acceptance Criteria
+
+- M11 remains planned/specified until an implementation task modifies production code and tests.
+- Existing Authorization behavior remains unchanged and all existing Authorization regression tests remain valid.
+- Existing Cookie behavior remains unchanged and all existing Cookie regression tests remain valid.
+- Existing selected sensitive-header behavior remains unchanged and all existing sensitive-header regression tests remain valid.
+- Existing selected sensitive-query-parameter behavior remains unchanged and all existing query-parameter regression tests remain valid.
+- Existing selected JSON-like field behavior remains unchanged and all existing JSON-field regression tests remain valid.
+- Existing selected form-urlencoded field behavior remains unchanged and all existing form-urlencoded regression tests remain valid.
+- Exact line-start `Proxy-Authorization` headers are matched case-insensitively.
+- Header-name casing is preserved.
+- Spaces and tabs around `:` are preserved.
+- Scheme casing is preserved.
+- Spaces and tabs before credentials are preserved.
+- Trailing spaces and tabs are preserved.
+- CRLF and LF line endings are preserved.
+- A final line without newline is supported.
+- Bearer proxy credentials redact with `proxy_authorization.bearer` and `<REDACTED:proxy_authorization.bearer>`.
+- Basic proxy credentials redact with `proxy_authorization.basic` and `<REDACTED:proxy_authorization.basic>`.
+- Generic valid schemes such as Digest, Negotiate, NTLM, or custom valid auth-schemes redact with `proxy_authorization.other` and `<REDACTED:proxy_authorization.credentials>`.
+- Multiple `Proxy-Authorization` headers are counted per changed header line and per proxy rule ID.
+- Exact proxy markers are idempotent.
+- A wrong proxy marker under another proxy scheme is accepted without normalization.
+- Embedded proxy markers are redacted.
+- Wrong-family non-proxy markers are re-redacted to the appropriate proxy marker.
+- Empty and whitespace-only values remain unchanged.
+- Malformed Bearer and Basic values remain unchanged and do not fall through to `proxy_authorization.other`.
+- Unicode auth schemes remain unchanged.
+- Indented and folded forms remain unchanged.
+- Folded forms produce no finding.
+- `Proxy-Authenticate`, `WWW-Authenticate`, `X-Proxy-Authorization`, and prose remain unchanged.
+- Proxy findings suppress nested query, JSON, and form findings inside proxy credential spans.
+- Normal URL query strings outside proxy credential spans still use `query.secret`.
+- Reports contain only fixed proxy rule IDs and counts.
+- App and CLI output contain no raw proxy credential values, proxy credential snippets, source excerpts, dynamic header names, or custom proxy scheme names as report IDs.
+- Golden fixture coverage uses synthetic-only values.
+- No broader additional header coverage, generic header matching, substring matching, full HTTP parsing, folded-header parsing, value decoding, recursive parsing, runtime configuration, plugin system, external dependency, CLI option, output format, network behavior, overwrite mode, or exit code is introduced.
+- Existing source immutability, output collision, dry-run, UTF-8, UTF-8 BOM, LF, CRLF, mixed-newline, final-newline, 10 MiB, NUL-byte, safe-error, and exit-code behavior remains unchanged.
+- Tests use only synthetic data.
+
+### M11 Verification Requirements
+
+Expected commands after implementation exists:
+
+```bash
+uv sync
+uv run evidence-sanitizer --help
+uv run python -m evidence_sanitizer --help
+uv run evidence-sanitizer sanitize --help
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src tests
+git diff --check
+```
+
+Required unit test coverage:
+
+- Bearer credential redaction.
+- Basic credential redaction.
+- Generic valid schemes such as Digest, Negotiate, NTLM, or custom valid auth-scheme.
+- Scheme casing preservation.
+- Header-name casing preservation.
+- Spaces and tabs around `:`.
+- Spaces and tabs before credentials.
+- Trailing spaces and tabs.
+- CRLF and LF.
+- Final line without newline.
+- Multiple `Proxy-Authorization` headers.
+- Counts per proxy rule ID.
+- Exact proxy marker idempotence.
+- Wrong proxy marker under another proxy scheme accepted without normalization.
+- Embedded proxy marker redaction.
+- Wrong-family non-proxy marker re-redaction.
+- Empty and whitespace-only values unchanged.
+- Malformed Bearer and Basic unchanged.
+- Unicode auth scheme unchanged.
+- Indented and folded forms unchanged.
+- `Proxy-Authenticate`, `WWW-Authenticate`, `X-Proxy-Authorization`, and prose unchanged.
+- Overlap behavior suppressing nested query, JSON, and form findings inside proxy credentials.
+- Proxy findings do not store raw proxy credentials or custom proxy scheme names.
+
+Required application, CLI, and fixture coverage:
+
+- Authorization plus Proxy-Authorization plus Cookie plus selected sensitive headers plus selected query parameters plus selected JSON-like fields plus selected form-urlencoded fields in one file.
+- Correct fixed counts for `authorization.bearer`, `authorization.basic`, `authorization.other`, `proxy_authorization.bearer`, `proxy_authorization.basic`, `proxy_authorization.other`, `cookie.value`, `cookie.header`, `header.secret`, `query.secret`, `json.value`, and `form.value`.
+- Safe CLI output contains no raw proxy credential values, proxy credential snippets, source excerpts, dynamic header names, or custom proxy scheme names as report IDs.
+- Source remains byte-for-byte unchanged.
+- Dry-run creates no output.
+- Existing output is not overwritten.
+- BOM and newline preservation remain unchanged.
+- Mixed line endings remain unchanged.
+- No-final-newline behavior remains unchanged.
+- Idempotence.
+- Golden fixture coverage uses synthetic-only proxy values and approved proxy markers.
+- Existing Authorization, Cookie, selected sensitive-header, selected sensitive-query-parameter, selected JSON-like field, and selected form-urlencoded regression coverage remains passing.
+- Existing exit-code behavior remains unchanged.
+- Console-script and module entry points remain consistent.
+
 ## Future Milestones
 
-Future milestones are deferred and must be approved before implementation.
+Future milestones, including M12 and later, are deferred and must be approved before implementation.
 
 Possible future topics:
 
@@ -2729,7 +2982,7 @@ Possible future topics:
 - `Set-Cookie` header redaction after false-positive behavior is defined.
 - Additional deterministic HTTP header rules beyond the approved milestone 5 selected sensitive-header list.
 - Privacy or identifier header redaction after scope and false-positive behavior are defined.
-- `Proxy-Authorization` sanitization after scheme-preserving behavior, markers, and rule IDs are defined.
+- Additional proxy-related headers such as `Proxy-Authenticate` or `X-Proxy-Authorization` after scope and false-positive behavior are defined.
 - Email or client-identifier redaction after scope and false-positive behavior are defined.
 - Optional machine-readable safe report format.
 - Additional structured format parsing beyond JSON-like string fields and form-urlencoded fields, such as full JSON validation, multipart bodies, XML, HTML, or JavaScript.
@@ -2745,7 +2998,10 @@ Possible future topics:
 - Telemetry value preservation, telemetry allowlists, and user-defined Cookie policy.
 - Sensitive HTTP header sanitization beyond the approved milestone 5 selected header list.
 - Privacy/client identity header sanitization.
-- `Proxy-Authorization` sanitization.
+- Proxy-related headers beyond the approved Milestone 11 `Proxy-Authorization` request-header scope.
+- `Proxy-Authenticate`, `WWW-Authenticate`, and `X-Proxy-Authorization` sanitization.
+- `Forwarded`, `X-Forwarded-*`, `X-Original-*`, and `Via` sanitization.
+- Additional signature headers.
 - Email redaction.
 - Client-identifier redaction.
 - Full HTTP header/body parsing.
