@@ -8,28 +8,64 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+# --- Size and exit-code constants ---
+
 MAX_INPUT_BYTES = 10 * 1024 * 1024
+
+EXIT_INTERNAL_ERROR = 1
+
+EXIT_UNSAFE_PATH = 3
+
+EXIT_INPUT_ERROR = 4
+
+EXIT_OUTPUT_ERROR = 5
+
+
+# --- Rule ID constants ---
+
 RULE_ID_AUTHORIZATION_BEARER = "authorization.bearer"
+
 RULE_ID_AUTHORIZATION_BASIC = "authorization.basic"
+
 RULE_ID_AUTHORIZATION_OTHER = "authorization.other"
+
 RULE_ID_COOKIE_VALUE = "cookie.value"
+
 RULE_ID_COOKIE_HEADER = "cookie.header"
+
 RULE_ID_HEADER_SECRET = "header.secret"
+
 RULE_ID_QUERY_SECRET = "query.secret"
+
 RULE_ID_JSON_VALUE = "json.value"
+
 RULE_ID_FORM_VALUE = "form.value"
 
+
+# --- Marker constants and approved-marker sets ---
+
 REDACTION_MARKER_AUTHORIZATION_BEARER = "<REDACTED:authorization.bearer>"
+
 REDACTION_MARKER_AUTHORIZATION_BASIC = "<REDACTED:authorization.basic>"
+
 REDACTION_MARKER_AUTHORIZATION_CREDENTIALS = "<REDACTED:authorization.credentials>"
+
 REDACTION_MARKER_COOKIE_VALUE = "<REDACTED:cookie.value>"
+
 REDACTION_MARKER_COOKIE_HEADER = "<REDACTED:cookie.header>"
+
 REDACTION_MARKER_HEADER_SECRET = "<REDACTED:header.secret>"
+
 REDACTION_MARKER_QUERY_SECRET = "<REDACTED:query.secret>"
+
 REDACTION_MARKER_JSON_VALUE = "<REDACTED:json.value>"
+
 REDACTION_MARKER_FORM_VALUE = "<REDACTED:form.value>"
+
 COOKIE_REDACTION_MARKER_PREFIX = "<REDACTED:cookie."
+
 REDACTION_MARKER = REDACTION_MARKER_AUTHORIZATION_BEARER
+
 APPROVED_REDACTION_MARKERS = frozenset(
     (
         REDACTION_MARKER_AUTHORIZATION_BEARER,
@@ -37,24 +73,31 @@ APPROVED_REDACTION_MARKERS = frozenset(
         REDACTION_MARKER_AUTHORIZATION_CREDENTIALS,
     )
 )
+
 APPROVED_COOKIE_REDACTION_MARKERS = frozenset(
     (
         REDACTION_MARKER_COOKIE_VALUE,
         REDACTION_MARKER_COOKIE_HEADER,
     )
 )
+
 APPROVED_QUERY_REDACTION_MARKERS = frozenset((REDACTION_MARKER_QUERY_SECRET,))
+
 APPROVED_JSON_REDACTION_MARKERS = frozenset((REDACTION_MARKER_JSON_VALUE,))
+
 APPROVED_FORM_REDACTION_MARKERS = frozenset((REDACTION_MARKER_FORM_VALUE,))
-COOKIE_HEADER_NAME = "Cookie"
-HTTP_TOKEN_CHARACTERS = frozenset(
-    "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-)
-ASCII_ALPHANUMERIC_CHARACTERS = frozenset("0123456789abcdefghijklmnopqrstuvwxyz")
+
+
+# --- Cookie classification constants and name sets ---
+
 COOKIE_CATEGORY_SENSITIVE = "sensitive"
+
 COOKIE_CATEGORY_TELEMETRY = "telemetry"
+
 COOKIE_CATEGORY_HARMLESS = "harmless"
+
 COOKIE_CATEGORY_UNKNOWN = "unknown"
+
 SENSITIVE_COOKIE_NAMES = frozenset(
     (
         "session",
@@ -89,6 +132,7 @@ SENSITIVE_COOKIE_NAMES = frozenset(
         "laravel_session",
     )
 )
+
 TELEMETRY_COOKIE_NAMES = frozenset(
     (
         "_ga",
@@ -108,6 +152,7 @@ TELEMETRY_COOKIE_NAMES = frozenset(
         "__hssrc",
     )
 )
+
 TELEMETRY_COOKIE_PREFIXES = (
     "_ga_",
     "_gat_",
@@ -117,9 +162,16 @@ TELEMETRY_COOKIE_PREFIXES = (
     "amp_",
     "mp_",
 )
+
 HARMLESS_COOKIE_NAMES = frozenset(("theme", "color_scheme", "display_mode"))
+
 SENSITIVE_ASPSESSIONID_PREFIX = "aspsessionid"
+
 SENSITIVE_REMEMBER_WEB_PREFIX = "remember_web_"
+
+
+# --- Header/query/JSON/form sensitive name sets ---
+
 _SENSITIVE_HEADER_NAMES = frozenset(
     (
         "x-api-key",
@@ -158,6 +210,7 @@ _SENSITIVE_HEADER_NAMES = frozenset(
         "client-secret",
     )
 )
+
 SENSITIVE_QUERY_PARAMETER_NAMES = frozenset(
     (
         "access_token",
@@ -182,6 +235,7 @@ SENSITIVE_QUERY_PARAMETER_NAMES = frozenset(
         "x-goog-signature",
     )
 )
+
 SENSITIVE_JSON_FIELD_NAMES = frozenset(
     (
         "token",
@@ -223,6 +277,7 @@ SENSITIVE_JSON_FIELD_NAMES = frozenset(
         "samlresponse",
     )
 )
+
 SENSITIVE_FORM_FIELD_NAMES = frozenset(
     (
         "access_token",
@@ -274,15 +329,28 @@ SENSITIVE_FORM_FIELD_NAMES = frozenset(
         "xsrf_token",
     )
 )
+
+
+# --- Grammar/content-type/query-boundary constants ---
+
+COOKIE_HEADER_NAME = "Cookie"
+
+HTTP_TOKEN_CHARACTERS = frozenset(
+    "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+)
+
+ASCII_ALPHANUMERIC_CHARACTERS = frozenset("0123456789abcdefghijklmnopqrstuvwxyz")
+
 _FORM_CONTENT_TYPE_HEADER_NAME = "content-type"
+
 _FORM_CONTENT_TYPE_MEDIA_TYPE = "application/x-www-form-urlencoded"
+
 _QUERY_TOKEN_TERMINATORS = frozenset(" \t\r\n\"'`#<>")
+
 _QUERY_TOKEN_BOUNDARIES = frozenset(" \t\r\n\"'`<>")
 
-EXIT_INTERNAL_ERROR = 1
-EXIT_UNSAFE_PATH = 3
-EXIT_INPUT_ERROR = 4
-EXIT_OUTPUT_ERROR = 5
+
+# --- Compiled Authorization pattern ---
 
 AUTHORIZATION_HEADER_PATTERN = re.compile(
     r"^Authorization[ \t]*:[ \t]*"
@@ -294,6 +362,9 @@ AUTHORIZATION_HEADER_PATTERN = re.compile(
 )
 
 
+# --- Exceptions ---
+
+
 class SafeError(Exception):
     """Expected failure with a user-safe message and documented exit code."""
 
@@ -301,6 +372,9 @@ class SafeError(Exception):
         super().__init__(message)
         self.message = message
         self.exit_code = exit_code
+
+
+# --- Dataclasses ---
 
 
 @dataclass(frozen=True)
@@ -346,6 +420,68 @@ class _ParsedCookieValue:
     value_end: int
 
 
+# --- Shared utilities ---
+
+
+def _iter_physical_lines(text: str) -> tuple[tuple[int, int, int], ...]:
+    """Return physical lines as start, content end, and next-line start."""
+    lines: list[tuple[int, int, int]] = []
+    position = 0
+
+    while position < len(text):
+        line_start = position
+        while position < len(text) and text[position] not in "\r\n":
+            position += 1
+        line_content_end = position
+
+        if position < len(text):
+            if text[position] == "\r" and position + 1 < len(text):
+                if text[position + 1] == "\n":
+                    position += 2
+                else:
+                    position += 1
+            else:
+                position += 1
+
+        lines.append((line_start, line_content_end, position))
+
+    return tuple(lines)
+
+
+def _skip_redaction_marker(text: str, position: int) -> int:
+    """Advance past a <REDACTED:...> marker so its angle brackets do not end a query."""
+    if (
+        position < len(text)
+        and text[position] == "<"
+        and text.startswith("<REDACTED:", position)
+    ):
+        marker_end = text.find(">", position)
+        if marker_end != -1:
+            return marker_end + 1
+    return position
+
+
+def _overlaps_existing_finding(
+    start: int, end: int, existing_findings: Sequence[Finding]
+) -> bool:
+    """Return whether a span intersects any existing finding."""
+    for finding in existing_findings:
+        if finding.end <= start:
+            continue
+        if finding.start >= end:
+            break
+        return True
+    return False
+
+
+def _ascii_lower(value: str) -> str:
+    """Lowercase only ASCII A-Z; leave all other characters unchanged."""
+    return "".join(c.lower() if "A" <= c <= "Z" else c for c in value)
+
+
+# --- Authorization rule finder and helpers ---
+
+
 def find_authorization_credentials(text: str) -> tuple[Finding, ...]:
     """Find HTTP-style Authorization credentials for milestone 2."""
     findings: list[Finding] = []
@@ -385,6 +521,23 @@ def find_authorization_credentials(text: str) -> tuple[Finding, ...]:
         )
 
     return tuple(findings)
+
+
+def _is_single_credential_token(value: str) -> bool:
+    """Return whether a specialized credential is one non-whitespace token."""
+    return not any(character.isspace() for character in value)
+
+
+def find_authorization_bearer(text: str) -> tuple[Finding, ...]:
+    """Find HTTP-style Authorization: Bearer credentials."""
+    return tuple(
+        finding
+        for finding in find_authorization_credentials(text)
+        if finding.rule_id == RULE_ID_AUTHORIZATION_BEARER
+    )
+
+
+# --- Cookie rule finder and helpers ---
 
 
 def find_cookie_values(text: str) -> tuple[Finding, ...]:
@@ -445,471 +598,6 @@ def find_cookie_values(text: str) -> tuple[Finding, ...]:
             )
 
     return tuple(findings)
-
-
-def _find_sensitive_header_values(text: str) -> tuple[Finding, ...]:
-    """Find selected sensitive HTTP-like header values."""
-    findings: list[Finding] = []
-
-    for line_start, line_content_end, next_line_start in _iter_physical_lines(text):
-        line = text[line_start:line_content_end]
-        position = 0
-        while position < len(line) and line[position] not in " \t:":
-            position += 1
-
-        header_name = line[:position]
-        if header_name.lower() not in _SENSITIVE_HEADER_NAMES:
-            continue
-
-        while position < len(line) and line[position] in " \t":
-            position += 1
-        if position >= len(line) or line[position] != ":":
-            continue
-
-        if next_line_start < len(text) and text[next_line_start] in " \t":
-            continue
-
-        position += 1
-        while position < len(line) and line[position] in " \t":
-            position += 1
-
-        value_start = line_start + position
-        header_value = text[value_start:line_content_end]
-        trimmed_value_length = len(header_value.rstrip(" \t"))
-        if trimmed_value_length == 0:
-            continue
-
-        trimmed_value = header_value[:trimmed_value_length]
-        if trimmed_value == REDACTION_MARKER_HEADER_SECRET:
-            continue
-
-        findings.append(
-            Finding(
-                rule_id=RULE_ID_HEADER_SECRET,
-                start=value_start,
-                end=value_start + trimmed_value_length,
-                replacement=REDACTION_MARKER_HEADER_SECRET,
-            )
-        )
-
-    return tuple(findings)
-
-
-def _skip_redaction_marker(text: str, position: int) -> int:
-    """Advance past a <REDACTED:...> marker so its angle brackets do not end a query."""
-    if (
-        position < len(text)
-        and text[position] == "<"
-        and text.startswith("<REDACTED:", position)
-    ):
-        marker_end = text.find(">", position)
-        if marker_end != -1:
-            return marker_end + 1
-    return position
-
-
-def _skip_to_query_token_end(text: str, position: int) -> int:
-    """Advance past the remainder of a URL fragment or terminated query token."""
-    # Begin just after the character that ended the query segment so we can
-    # consume through any fragment content before the next URL wrapping
-    # terminator or whitespace boundary. Additional '#' characters inside the
-    # fragment are fragment text, not query-segment terminators.
-    position += 1
-    while position < len(text) and text[position] not in _QUERY_TOKEN_BOUNDARIES:
-        position += 1
-        position = _skip_redaction_marker(text, position)
-    return position
-
-
-def _overlaps_existing_finding(
-    start: int, end: int, existing_findings: Sequence[Finding]
-) -> bool:
-    """Return whether a span intersects any existing finding."""
-    for finding in existing_findings:
-        if finding.end <= start:
-            continue
-        if finding.start >= end:
-            break
-        return True
-    return False
-
-
-def _find_query_parameter_values(
-    text: str, existing_findings: Sequence[Finding]
-) -> tuple[Finding, ...]:
-    """Find approved raw URL query parameter values for milestone 6."""
-    findings: list[Finding] = []
-    existing_sorted = sorted(existing_findings, key=lambda item: item.start)
-    position = 0
-
-    while position < len(text):
-        if text[position] != "?":
-            position += 1
-            continue
-
-        token_position = position + 1
-        while token_position < len(text):
-            token_position = _skip_redaction_marker(text, token_position)
-            if token_position >= len(text):
-                break
-
-            character = text[token_position]
-            if character in _QUERY_TOKEN_TERMINATORS:
-                break
-            if character == "#":
-                token_position = _skip_to_query_token_end(text, token_position)
-                break
-            if character in "&;":
-                token_position += 1
-                continue
-
-            segment_start = token_position
-            while token_position < len(text):
-                token_position = _skip_redaction_marker(text, token_position)
-                if token_position >= len(text):
-                    break
-
-                char = text[token_position]
-                if char in _QUERY_TOKEN_TERMINATORS or char in "&;#":
-                    break
-                token_position += 1
-
-            segment_end = token_position
-            equals_index = text.find("=", segment_start, segment_end)
-            if equals_index != -1:
-                name = text[segment_start:equals_index]
-                if name.lower() in SENSITIVE_QUERY_PARAMETER_NAMES:
-                    value_start = equals_index + 1
-                    value_end = segment_end
-                    json_value_end = _find_balanced_json_like_value_end(
-                        text, value_start
-                    )
-                    if json_value_end is not None:
-                        value_end = json_value_end
-                        token_position = json_value_end
-                    if text[value_start:value_end] == REDACTION_MARKER_QUERY_SECRET:
-                        pass
-                    elif _overlaps_existing_finding(
-                        segment_start, value_end, existing_sorted
-                    ):
-                        pass
-                    else:
-                        findings.append(
-                            Finding(
-                                rule_id=RULE_ID_QUERY_SECRET,
-                                start=value_start,
-                                end=value_end,
-                                replacement=REDACTION_MARKER_QUERY_SECRET,
-                            )
-                        )
-
-            if token_position < len(text) and text[token_position] in "&;":
-                token_position += 1
-                continue
-            if token_position < len(text) and text[token_position] == "#":
-                token_position = _skip_to_query_token_end(text, token_position)
-                break
-            break
-
-        position = token_position
-
-    return tuple(findings)
-
-
-class _MalformedJsonString(Exception):
-    """Raised when a JSON-like string candidate cannot be parsed safely."""
-
-    def __init__(self, position: int) -> None:
-        super().__init__()
-        self.position = position
-
-
-def _ascii_lower(value: str) -> str:
-    """Lowercase only ASCII A-Z; leave all other characters unchanged."""
-    return "".join(c.lower() if "A" <= c <= "Z" else c for c in value)
-
-
-def _parse_json_string(text: str, start: int) -> tuple[int, int, int]:
-    """Parse a JSON-like string starting at `start`.
-
-    Returns (payload_start, payload_end, end_position) where payload is the
-    raw content between the opening and closing quotes and end_position is the
-    index just after the closing quote.
-
-    Raises _MalformedJsonString if the string is unterminated, contains a
-    literal CR/LF, or contains an invalid escape sequence.
-    """
-    position = start + 1
-    while position < len(text):
-        character = text[position]
-        if character == '"':
-            return start + 1, position, position + 1
-        if character in "\r\n":
-            raise _MalformedJsonString(position)
-        if character == "\\":
-            if position + 1 >= len(text):
-                raise _MalformedJsonString(position)
-            escaped = text[position + 1]
-            if escaped == "u":
-                if position + 6 > len(text):
-                    raise _MalformedJsonString(position)
-                for hex_index in range(position + 2, position + 6):
-                    if text[hex_index] not in "0123456789abcdefABCDEF":
-                        raise _MalformedJsonString(position)
-                position += 6
-                continue
-            if escaped not in '"\\/bfnrt':
-                raise _MalformedJsonString(position)
-            position += 2
-            continue
-        position += 1
-    raise _MalformedJsonString(position)
-
-
-def _find_balanced_json_like_value_end(text: str, start: int) -> int | None:
-    """Return the end offset for a balanced raw JSON-like object or array."""
-    if start >= len(text) or text[start] not in "[{":
-        return None
-
-    closing_by_opening = {"{": "}", "[": "]"}
-    expected_closings = [closing_by_opening[text[start]]]
-    position = start + 1
-
-    while position < len(text):
-        character = text[position]
-        if character == '"':
-            try:
-                _payload_start, _payload_end, position = _parse_json_string(
-                    text, position
-                )
-            except _MalformedJsonString:
-                return None
-            continue
-        if character in closing_by_opening:
-            expected_closings.append(closing_by_opening[character])
-            position += 1
-            continue
-        if character in "}]":
-            if not expected_closings or character != expected_closings[-1]:
-                return None
-            expected_closings.pop()
-            position += 1
-            if not expected_closings:
-                return position
-            continue
-        if character in "\r\n":
-            return None
-        position += 1
-
-    return None
-
-
-def _find_json_field_values(
-    text: str, existing_findings: Sequence[Finding]
-) -> tuple[Finding, ...]:
-    """Find approved sensitive JSON-like string field values."""
-    findings: list[Finding] = []
-    existing_sorted = sorted(existing_findings, key=lambda item: item.start)
-    position = 0
-
-    while position < len(text):
-        if text[position] != '"':
-            position += 1
-            continue
-
-        try:
-            key_payload_start, key_payload_end, key_end = _parse_json_string(
-                text, position
-            )
-        except _MalformedJsonString as exc:
-            position = exc.position + 1
-            continue
-
-        scan_position = key_end
-        while scan_position < len(text) and text[scan_position] in " \t":
-            scan_position += 1
-        if scan_position >= len(text) or text[scan_position] != ":":
-            position = key_end
-            continue
-
-        scan_position += 1
-        while scan_position < len(text) and text[scan_position] in " \t":
-            scan_position += 1
-        if scan_position >= len(text) or text[scan_position] != '"':
-            position = key_end
-            continue
-
-        try:
-            value_payload_start, value_payload_end, value_end = _parse_json_string(
-                text, scan_position
-            )
-        except _MalformedJsonString as exc:
-            position = exc.position + 1
-            continue
-
-        key_payload = text[key_payload_start:key_payload_end]
-        if _ascii_lower(key_payload) in SENSITIVE_JSON_FIELD_NAMES:
-            value_payload = text[value_payload_start:value_payload_end]
-            if (
-                value_payload != REDACTION_MARKER_JSON_VALUE
-                and not _overlaps_existing_finding(
-                    value_payload_start, value_payload_end, existing_sorted
-                )
-            ):
-                findings.append(
-                    Finding(
-                        rule_id=RULE_ID_JSON_VALUE,
-                        start=value_payload_start,
-                        end=value_payload_end,
-                        replacement=REDACTION_MARKER_JSON_VALUE,
-                    )
-                )
-
-        position = value_end
-
-    return tuple(findings)
-
-
-def _is_form_content_type_line(line: str) -> bool:
-    """Return whether a physical line is a supported form-urlencoded Content-Type."""
-    header_name = _FORM_CONTENT_TYPE_HEADER_NAME
-    if len(line) < len(header_name):
-        return False
-    if line[: len(header_name)].lower() != header_name:
-        return False
-
-    position = len(header_name)
-    while position < len(line) and line[position] in " \t":
-        position += 1
-    if position >= len(line) or line[position] != ":":
-        return False
-
-    position += 1
-    while position < len(line) and line[position] in " \t":
-        position += 1
-
-    media_type = _FORM_CONTENT_TYPE_MEDIA_TYPE
-    if len(line) < position + len(media_type):
-        return False
-    if line[position : position + len(media_type)].lower() != media_type:
-        return False
-
-    position += len(media_type)
-    while position < len(line) and line[position] in " \t":
-        position += 1
-    if position == len(line):
-        return True
-    if line[position] == ";":
-        return True
-
-    return False
-
-
-def _find_form_urlencoded_values(
-    text: str, existing_findings: Sequence[Finding]
-) -> tuple[Finding, ...]:
-    """Find approved sensitive form-urlencoded field values for milestone 10."""
-    findings: list[Finding] = []
-    existing_sorted = sorted(existing_findings, key=lambda item: item.start)
-    lines = _iter_physical_lines(text)
-    processed_body_starts: set[int] = set()
-
-    for content_type_index, (line_start, line_content_end, _) in enumerate(lines):
-        line = text[line_start:line_content_end]
-        if not _is_form_content_type_line(line):
-            continue
-
-        separator_index = None
-        for index in range(content_type_index + 1, len(lines)):
-            candidate_start, candidate_end, _ = lines[index]
-            if candidate_start == candidate_end:
-                separator_index = index
-                break
-
-        if separator_index is None:
-            continue
-
-        body_index = separator_index + 1
-        if body_index >= len(lines):
-            continue
-
-        body_start, body_end, _ = lines[body_index]
-        if body_start == body_end:
-            continue
-
-        if body_start in processed_body_starts:
-            continue
-        processed_body_starts.add(body_start)
-
-        body_line = text[body_start:body_end]
-        position = 0
-        while position < len(body_line):
-            segment_start = position
-            amp_index = body_line.find("&", position)
-            if amp_index == -1:
-                segment_end = len(body_line)
-                position = segment_end
-            else:
-                segment_end = amp_index
-                position = amp_index + 1
-
-            equals_index = body_line.find("=", segment_start, segment_end)
-            if equals_index == -1:
-                continue
-
-            name = body_line[segment_start:equals_index]
-            if _ascii_lower(name) not in SENSITIVE_FORM_FIELD_NAMES:
-                continue
-
-            value_start = equals_index + 1
-            value_end = segment_end
-            value = body_line[value_start:value_end]
-
-            if value == REDACTION_MARKER_FORM_VALUE:
-                continue
-
-            absolute_start = body_start + value_start
-            absolute_end = body_start + value_end
-            if _overlaps_existing_finding(
-                absolute_start, absolute_end, existing_sorted
-            ):
-                continue
-
-            findings.append(
-                Finding(
-                    rule_id=RULE_ID_FORM_VALUE,
-                    start=absolute_start,
-                    end=absolute_end,
-                    replacement=REDACTION_MARKER_FORM_VALUE,
-                )
-            )
-
-    return tuple(findings)
-
-
-def _iter_physical_lines(text: str) -> tuple[tuple[int, int, int], ...]:
-    """Return physical lines as start, content end, and next-line start."""
-    lines: list[tuple[int, int, int]] = []
-    position = 0
-
-    while position < len(text):
-        line_start = position
-        while position < len(text) and text[position] not in "\r\n":
-            position += 1
-        line_content_end = position
-
-        if position < len(text):
-            if text[position] == "\r" and position + 1 < len(text):
-                if text[position + 1] == "\n":
-                    position += 2
-                else:
-                    position += 1
-            else:
-                position += 1
-
-        lines.append((line_start, line_content_end, position))
-
-    return tuple(lines)
 
 
 def _cookie_header_value_start(line: str) -> int | None:
@@ -1094,18 +782,428 @@ def _is_unsupported_cookie_control(character: str) -> bool:
     return codepoint < 32 or codepoint == 127
 
 
-def _is_single_credential_token(value: str) -> bool:
-    """Return whether a specialized credential is one non-whitespace token."""
-    return not any(character.isspace() for character in value)
+# --- Sensitive header rule finder ---
 
 
-def find_authorization_bearer(text: str) -> tuple[Finding, ...]:
-    """Find HTTP-style Authorization: Bearer credentials."""
-    return tuple(
-        finding
-        for finding in find_authorization_credentials(text)
-        if finding.rule_id == RULE_ID_AUTHORIZATION_BEARER
-    )
+def _find_sensitive_header_values(text: str) -> tuple[Finding, ...]:
+    """Find selected sensitive HTTP-like header values."""
+    findings: list[Finding] = []
+
+    for line_start, line_content_end, next_line_start in _iter_physical_lines(text):
+        line = text[line_start:line_content_end]
+        position = 0
+        while position < len(line) and line[position] not in " \t:":
+            position += 1
+
+        header_name = line[:position]
+        if header_name.lower() not in _SENSITIVE_HEADER_NAMES:
+            continue
+
+        while position < len(line) and line[position] in " \t":
+            position += 1
+        if position >= len(line) or line[position] != ":":
+            continue
+
+        if next_line_start < len(text) and text[next_line_start] in " \t":
+            continue
+
+        position += 1
+        while position < len(line) and line[position] in " \t":
+            position += 1
+
+        value_start = line_start + position
+        header_value = text[value_start:line_content_end]
+        trimmed_value_length = len(header_value.rstrip(" \t"))
+        if trimmed_value_length == 0:
+            continue
+
+        trimmed_value = header_value[:trimmed_value_length]
+        if trimmed_value == REDACTION_MARKER_HEADER_SECRET:
+            continue
+
+        findings.append(
+            Finding(
+                rule_id=RULE_ID_HEADER_SECRET,
+                start=value_start,
+                end=value_start + trimmed_value_length,
+                replacement=REDACTION_MARKER_HEADER_SECRET,
+            )
+        )
+
+    return tuple(findings)
+
+
+# --- Query parameter rule finder and helpers ---
+
+
+def _skip_to_query_token_end(text: str, position: int) -> int:
+    """Advance past the remainder of a URL fragment or terminated query token."""
+    # Begin just after the character that ended the query segment so we can
+    # consume through any fragment content before the next URL wrapping
+    # terminator or whitespace boundary. Additional '#' characters inside the
+    # fragment are fragment text, not query-segment terminators.
+    position += 1
+    while position < len(text) and text[position] not in _QUERY_TOKEN_BOUNDARIES:
+        position += 1
+        position = _skip_redaction_marker(text, position)
+    return position
+
+
+def _find_query_parameter_values(
+    text: str, existing_findings: Sequence[Finding]
+) -> tuple[Finding, ...]:
+    """Find approved raw URL query parameter values for milestone 6."""
+    findings: list[Finding] = []
+    existing_sorted = sorted(existing_findings, key=lambda item: item.start)
+    position = 0
+
+    while position < len(text):
+        if text[position] != "?":
+            position += 1
+            continue
+
+        token_position = position + 1
+        while token_position < len(text):
+            token_position = _skip_redaction_marker(text, token_position)
+            if token_position >= len(text):
+                break
+
+            character = text[token_position]
+            if character in _QUERY_TOKEN_TERMINATORS:
+                break
+            if character == "#":
+                token_position = _skip_to_query_token_end(text, token_position)
+                break
+            if character in "&;":
+                token_position += 1
+                continue
+
+            segment_start = token_position
+            while token_position < len(text):
+                token_position = _skip_redaction_marker(text, token_position)
+                if token_position >= len(text):
+                    break
+
+                char = text[token_position]
+                if char in _QUERY_TOKEN_TERMINATORS or char in "&;#":
+                    break
+                token_position += 1
+
+            segment_end = token_position
+            equals_index = text.find("=", segment_start, segment_end)
+            if equals_index != -1:
+                name = text[segment_start:equals_index]
+                if name.lower() in SENSITIVE_QUERY_PARAMETER_NAMES:
+                    value_start = equals_index + 1
+                    value_end = segment_end
+                    json_value_end = _find_balanced_json_like_value_end(
+                        text, value_start
+                    )
+                    if json_value_end is not None:
+                        value_end = json_value_end
+                        token_position = json_value_end
+                    if text[value_start:value_end] == REDACTION_MARKER_QUERY_SECRET:
+                        pass
+                    elif _overlaps_existing_finding(
+                        segment_start, value_end, existing_sorted
+                    ):
+                        pass
+                    else:
+                        findings.append(
+                            Finding(
+                                rule_id=RULE_ID_QUERY_SECRET,
+                                start=value_start,
+                                end=value_end,
+                                replacement=REDACTION_MARKER_QUERY_SECRET,
+                            )
+                        )
+
+            if token_position < len(text) and text[token_position] in "&;":
+                token_position += 1
+                continue
+            if token_position < len(text) and text[token_position] == "#":
+                token_position = _skip_to_query_token_end(text, token_position)
+                break
+            break
+
+        position = token_position
+
+    return tuple(findings)
+
+
+# --- JSON field rule finder and helpers ---
+
+
+class _MalformedJsonString(Exception):
+    """Raised when a JSON-like string candidate cannot be parsed safely."""
+
+    def __init__(self, position: int) -> None:
+        super().__init__()
+        self.position = position
+
+
+def _parse_json_string(text: str, start: int) -> tuple[int, int, int]:
+    """Parse a JSON-like string starting at `start`.
+
+    Returns (payload_start, payload_end, end_position) where payload is the
+    raw content between the opening and closing quotes and end_position is the
+    index just after the closing quote.
+
+    Raises _MalformedJsonString if the string is unterminated, contains a
+    literal CR/LF, or contains an invalid escape sequence.
+    """
+    position = start + 1
+    while position < len(text):
+        character = text[position]
+        if character == '"':
+            return start + 1, position, position + 1
+        if character in "\r\n":
+            raise _MalformedJsonString(position)
+        if character == "\\":
+            if position + 1 >= len(text):
+                raise _MalformedJsonString(position)
+            escaped = text[position + 1]
+            if escaped == "u":
+                if position + 6 > len(text):
+                    raise _MalformedJsonString(position)
+                for hex_index in range(position + 2, position + 6):
+                    if text[hex_index] not in "0123456789abcdefABCDEF":
+                        raise _MalformedJsonString(position)
+                position += 6
+                continue
+            if escaped not in '"\\/bfnrt':
+                raise _MalformedJsonString(position)
+            position += 2
+            continue
+        position += 1
+    raise _MalformedJsonString(position)
+
+
+def _find_balanced_json_like_value_end(text: str, start: int) -> int | None:
+    """Return the end offset for a balanced raw JSON-like object or array."""
+    if start >= len(text) or text[start] not in "[{":
+        return None
+
+    closing_by_opening = {"{": "}", "[": "]"}
+    expected_closings = [closing_by_opening[text[start]]]
+    position = start + 1
+
+    while position < len(text):
+        character = text[position]
+        if character == '"':
+            try:
+                _payload_start, _payload_end, position = _parse_json_string(
+                    text, position
+                )
+            except _MalformedJsonString:
+                return None
+            continue
+        if character in closing_by_opening:
+            expected_closings.append(closing_by_opening[character])
+            position += 1
+            continue
+        if character in "}]":
+            if not expected_closings or character != expected_closings[-1]:
+                return None
+            expected_closings.pop()
+            position += 1
+            if not expected_closings:
+                return position
+            continue
+        if character in "\r\n":
+            return None
+        position += 1
+
+    return None
+
+
+def _find_json_field_values(
+    text: str, existing_findings: Sequence[Finding]
+) -> tuple[Finding, ...]:
+    """Find approved sensitive JSON-like string field values."""
+    findings: list[Finding] = []
+    existing_sorted = sorted(existing_findings, key=lambda item: item.start)
+    position = 0
+
+    while position < len(text):
+        if text[position] != '"':
+            position += 1
+            continue
+
+        try:
+            key_payload_start, key_payload_end, key_end = _parse_json_string(
+                text, position
+            )
+        except _MalformedJsonString as exc:
+            position = exc.position + 1
+            continue
+
+        scan_position = key_end
+        while scan_position < len(text) and text[scan_position] in " \t":
+            scan_position += 1
+        if scan_position >= len(text) or text[scan_position] != ":":
+            position = key_end
+            continue
+
+        scan_position += 1
+        while scan_position < len(text) and text[scan_position] in " \t":
+            scan_position += 1
+        if scan_position >= len(text) or text[scan_position] != '"':
+            position = key_end
+            continue
+
+        try:
+            value_payload_start, value_payload_end, value_end = _parse_json_string(
+                text, scan_position
+            )
+        except _MalformedJsonString as exc:
+            position = exc.position + 1
+            continue
+
+        key_payload = text[key_payload_start:key_payload_end]
+        if _ascii_lower(key_payload) in SENSITIVE_JSON_FIELD_NAMES:
+            value_payload = text[value_payload_start:value_payload_end]
+            if (
+                value_payload != REDACTION_MARKER_JSON_VALUE
+                and not _overlaps_existing_finding(
+                    value_payload_start, value_payload_end, existing_sorted
+                )
+            ):
+                findings.append(
+                    Finding(
+                        rule_id=RULE_ID_JSON_VALUE,
+                        start=value_payload_start,
+                        end=value_payload_end,
+                        replacement=REDACTION_MARKER_JSON_VALUE,
+                    )
+                )
+
+        position = value_end
+
+    return tuple(findings)
+
+
+# --- Form-urlencoded rule finder and helpers ---
+
+
+def _is_form_content_type_line(line: str) -> bool:
+    """Return whether a physical line is a supported form-urlencoded Content-Type."""
+    header_name = _FORM_CONTENT_TYPE_HEADER_NAME
+    if len(line) < len(header_name):
+        return False
+    if line[: len(header_name)].lower() != header_name:
+        return False
+
+    position = len(header_name)
+    while position < len(line) and line[position] in " \t":
+        position += 1
+    if position >= len(line) or line[position] != ":":
+        return False
+
+    position += 1
+    while position < len(line) and line[position] in " \t":
+        position += 1
+
+    media_type = _FORM_CONTENT_TYPE_MEDIA_TYPE
+    if len(line) < position + len(media_type):
+        return False
+    if line[position : position + len(media_type)].lower() != media_type:
+        return False
+
+    position += len(media_type)
+    while position < len(line) and line[position] in " \t":
+        position += 1
+    if position == len(line):
+        return True
+    if line[position] == ";":
+        return True
+
+    return False
+
+
+def _find_form_urlencoded_values(
+    text: str, existing_findings: Sequence[Finding]
+) -> tuple[Finding, ...]:
+    """Find approved sensitive form-urlencoded field values for milestone 10."""
+    findings: list[Finding] = []
+    existing_sorted = sorted(existing_findings, key=lambda item: item.start)
+    lines = _iter_physical_lines(text)
+    processed_body_starts: set[int] = set()
+
+    for content_type_index, (line_start, line_content_end, _) in enumerate(lines):
+        line = text[line_start:line_content_end]
+        if not _is_form_content_type_line(line):
+            continue
+
+        separator_index = None
+        for index in range(content_type_index + 1, len(lines)):
+            candidate_start, candidate_end, _ = lines[index]
+            if candidate_start == candidate_end:
+                separator_index = index
+                break
+
+        if separator_index is None:
+            continue
+
+        body_index = separator_index + 1
+        if body_index >= len(lines):
+            continue
+
+        body_start, body_end, _ = lines[body_index]
+        if body_start == body_end:
+            continue
+
+        if body_start in processed_body_starts:
+            continue
+        processed_body_starts.add(body_start)
+
+        body_line = text[body_start:body_end]
+        position = 0
+        while position < len(body_line):
+            segment_start = position
+            amp_index = body_line.find("&", position)
+            if amp_index == -1:
+                segment_end = len(body_line)
+                position = segment_end
+            else:
+                segment_end = amp_index
+                position = amp_index + 1
+
+            equals_index = body_line.find("=", segment_start, segment_end)
+            if equals_index == -1:
+                continue
+
+            name = body_line[segment_start:equals_index]
+            if _ascii_lower(name) not in SENSITIVE_FORM_FIELD_NAMES:
+                continue
+
+            value_start = equals_index + 1
+            value_end = segment_end
+            value = body_line[value_start:value_end]
+
+            if value == REDACTION_MARKER_FORM_VALUE:
+                continue
+
+            absolute_start = body_start + value_start
+            absolute_end = body_start + value_end
+            if _overlaps_existing_finding(
+                absolute_start, absolute_end, existing_sorted
+            ):
+                continue
+
+            findings.append(
+                Finding(
+                    rule_id=RULE_ID_FORM_VALUE,
+                    start=absolute_start,
+                    end=absolute_end,
+                    replacement=REDACTION_MARKER_FORM_VALUE,
+                )
+            )
+
+    return tuple(findings)
+
+
+# --- Replacement engine ---
 
 
 def apply_findings(text: str, findings: Sequence[Finding]) -> str:
@@ -1125,6 +1223,9 @@ def apply_findings(text: str, findings: Sequence[Finding]) -> str:
         next_start = finding.start
 
     return sanitized
+
+
+# --- Core sanitization ---
 
 
 def sanitize_text(text: str) -> tuple[str, SanitizationReport]:
@@ -1148,6 +1249,9 @@ def sanitize_text(text: str) -> tuple[str, SanitizationReport]:
         counts_by_rule=counts,
         changed=sanitized != text,
     )
+
+
+# --- File/path I/O and orchestration ---
 
 
 def validate_paths(input_path: Path, output_path: Path) -> None:
