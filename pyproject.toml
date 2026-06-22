@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "evidence-sanitizer"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-first CLI for creating sanitized copies of authorized penetration-testing evidence."
 requires-python = ">=3.12"
 dependencies = [
