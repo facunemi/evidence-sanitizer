@@ -4,6 +4,16 @@
 
 Local-first CLI for sanitizing authorized pentest evidence before pasting it into reports, tickets, notes, PoCs, or sharing it internally.
 
+## Contents
+
+- [Why this exists](#why-this-exists)
+- [What it sanitizes](#what-it-sanitizes)
+- [Safety model](#safety-model)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Examples](#examples)
+- [Limitations](#limitations)
+
 ## Why This Exists
 
 Penetration testers and application security engineers often need to share evidence while protecting credentials, tokens, signatures, and other secrets. `evidence-sanitizer` creates a sanitized copy of one text file at a time, replacing known sensitive values with deterministic markers and reporting which rule families triggered, without ever exposing the detected values.
